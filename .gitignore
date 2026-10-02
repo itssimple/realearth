@@ -1,0 +1,10 @@
+.gradle/
+build/
+run/
+run-selftest/
+out/
+*.iml
+.idea/
+run-shots/
+run-selftest-earthtype/
+libs/

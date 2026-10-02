@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "axis=x": {
+      "model": "realearth:block/earth_portal_ns"
+    },
+    "axis=z": {
+      "model": "realearth:block/earth_portal_ew"
+    }
+  }
+}

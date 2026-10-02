@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "package": "se.itssimple.realearth.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "BiomeTemperatureMixin",
+    "HeightRangePlacementMixin",
+    "BeardifierAccessor",
+    "OceanMonumentStructureMixin",
+    "MonumentBuildingMixin",
+    "JigsawStructureMixin",
+    "StructurePiecesBuilderMixin",
+    "ChunkMapAccessor",
+    "ServerLevelAccessor",
+    "PersistentEntitySectionManagerAccessor",
+    "EntityStorageAccessor",
+    "InitialSpawnMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "ClientLevelDataMixin"
+  ]
+}

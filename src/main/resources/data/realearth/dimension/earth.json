@@ -1,0 +1,9 @@
+{
+  "type": "realearth:earth",
+  "generator": {
+    "type": "realearth:earth",
+    "biome_source": {
+      "type": "realearth:earth"
+    }
+  }
+}

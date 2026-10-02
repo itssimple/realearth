@@ -1,0 +1,69 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+loom {
+	splitEnvironmentSourceSets()
+
+	mods {
+		"realearth" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+
+	runs {
+		selftest {
+			server()
+			name "Self-test Server"
+			vmArg "-Drealearth.selftest=true"
+			runDir "run-selftest"
+		}
+		selftestEarthType {
+			server()
+			name "Self-test Server (Earth world type)"
+			vmArg "-Drealearth.selftest=true"
+			runDir "run-selftest-earthtype"
+		}
+		shots {
+			client()
+			name "Screenshot Tour"
+			vmArg "-Drealearth.shots=true"
+			vmArg "-Drealearth.shotList=${project.findProperty('shotList') ?: 'places'}"
+			vmArg "-Drealearth.shotTicks=${project.findProperty('shotTicks') ?: 600}"
+			vmArg "-Drealearth.dhValidate=true"
+			vmArg "-Drealearth.lodCanopy=${project.findProperty('lodCanopy') ?: 'true'}"
+			vmArg "-Drealearth.shotOnly=${project.findProperty('shotOnly') ?: ''}"
+			programArgs "--quickPlaySingleplayer", "earthtest"
+			runDir "run-shots"
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Optional: Distant Horizons, for level-of-detail terrain. Compile against it, never ship it.
+	// Download DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar from Modrinth into libs/.
+	compileOnly files("libs/DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar")
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}

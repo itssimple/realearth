@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "realearth",
+  "version": "${version}",
+  "name": "Real Earth",
+  "description": "A dimension built from real-world elevation data at one block per metre. Build a lapis frame and light it with a Globe Banner Pattern.",
+  "authors": [
+    "itssimple"
+  ],
+  "license": "MIT",
+  "icon": "assets/realearth/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "se.itssimple.realearth.RealEarth"
+    ],
+    "client": [
+      "se.itssimple.realearth.client.RealEarthClient"
+    ]
+  },
+  "mixins": [
+    "realearth.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~26.1",
+    "java": ">=25",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "distanthorizons": ">=3.3.0"
+  }
+}
