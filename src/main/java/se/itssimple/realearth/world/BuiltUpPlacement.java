@@ -60,7 +60,8 @@ public final class BuiltUpPlacement extends RandomSpreadStructurePlacement {
 	public boolean applyAdditionalChunkRestrictions(int sourceX, int sourceZ, long levelSeed) {
 		return super.applyAdditionalChunkRestrictions(sourceX, sourceZ, levelSeed) && GenContext.exact()
 			&& builtShare(sourceX * 16 + 8, sourceZ * 16 + 8, radius) >= minBuiltShare
-			&& !nearRailOrMotorway(sourceX * 16 + 8, sourceZ * 16 + 8, radius + 16);
+			&& !nearRailOrMotorway(sourceX * 16 + 8, sourceZ * 16 + 8, radius + 16)
+			&& mappedBuildings(sourceX * 16 + 8, sourceZ * 16 + 8, radius) < BUILDINGS_REPLACE_VILLAGE;
 	}
 
 	/**
@@ -149,6 +150,38 @@ public final class BuiltUpPlacement extends RandomSpreadStructurePlacement {
 		double len = dx * dx + dy * dy;
 		double u = len > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len)) : 0;
 		return Math.hypot(x - (ax + u * dx), y - (ay + u * dy));
+	}
+
+	/** With this many real buildings mapped around, the town is built from them instead of a village. */
+	public static final int BUILDINGS_REPLACE_VILLAGE = 2;
+
+	/**
+	 * How many of the map's buildings reach within {@code radius} blocks (by their bounding boxes), when
+	 * buildings are being built at all; 0 otherwise. Blocks on the map download.
+	 */
+	public static int mappedBuildings(int centreX, int centreZ, int radius) {
+		TerrainField field = RealEarth.terrain();
+		if (field == null || field.map() == null || !RealEarth.config().useBuildings) {
+			return 0;
+		}
+		double lat = field.projection().latitudeAt(centreZ);
+		double lon = field.projection().longitudeAt(centreX, lat);
+		double sx = se.itssimple.realearth.geo.Mercator.sampleX(lon);
+		double sy = se.itssimple.realearth.geo.Mercator.sampleY(lat);
+		double reach = radius / field.projection().blocksPerMeter(lat) / se.itssimple.realearth.geo.Mercator.sampleSpacingMeters(lat);
+		int count = 0;
+		try {
+			for (int[] t : se.itssimple.realearth.osm.OsmWater.tilesCovering((long) (sx - reach), (long) (sy - reach), (long) (sx + reach), (long) (sy + reach))) {
+				for (var b : field.map().tile(t[0], t[1]).get(60, TimeUnit.SECONDS).buildings()) {
+					if (b.maxX() >= sx - reach && b.minX() <= sx + reach && b.maxY() >= sy - reach && b.minY() <= sy + reach) {
+						count++;
+					}
+				}
+			}
+		} catch (Exception e) {
+			return 0;
+		}
+		return count;
 	}
 
 	@Override

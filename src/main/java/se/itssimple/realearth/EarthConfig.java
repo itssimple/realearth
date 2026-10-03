@@ -79,6 +79,18 @@ public final class EarthConfig {
 	public boolean useRoads = true;
 	/** Draw railways and tram lines from OpenStreetMap, with real rails. */
 	public boolean useRailways = true;
+
+	/**
+	 * Build OpenStreetMap's buildings as furnished village-style houses, with wells, farms and lamps
+	 * between them. Where buildings are mapped, no villages are generated.
+	 */
+	public boolean useBuildings = true;
+	/** Height of each storey, in metres (at least 5 blocks). Storeys are counted from the real height at 3 m each. */
+	public double storeyMeters = 4.5;
+	/** Most storeys a building gets. */
+	public int maxFloors = 10;
+	/** Share of beds that come with a villager. */
+	public double villagerShare = 0.4;
 	public String landCoverUrl = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif";
 
 	/** Lakes are perfectly flat in the source data; this finds them and fills them with water. Used where map water is not. */

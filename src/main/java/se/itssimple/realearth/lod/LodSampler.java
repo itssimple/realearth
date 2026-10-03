@@ -137,6 +137,15 @@ public final class LodSampler {
 			boolean wet = !Float.isNaN(t.waterMeters[idx]) && t.waterTopY[idx] != Integer.MIN_VALUE;
 			out[k] = column(t.latitude[idx], t.longitude[idx], t.groundMeters[idx], wet ? t.waterMeters[idx] : Double.NaN, t.lake[idx],
 				t.slope(lx, lz), t.cover[idx] & 0xFF, t.climate[idx] & 0xFF);
+			var plan = t.building[idx] == 0 ? null : t.plans.get(t.building[idx] - 1);
+			if (plan != null) {
+				// Near the player, buildings stand in the distant terrain too, as solid blocks to their roofs.
+				String roof = plan.style == se.itssimple.realearth.terrain.BuildingPlan.Style.DESERT ? "minecraft:smooth_sandstone"
+					: plan.roofRise > 0 ? "minecraft:dark_oak_planks" : "minecraft:smooth_stone";
+				LodSampler.Column c = out[k];
+				out[k] = new Column(t.roofY[idx], Integer.MIN_VALUE, roof, "minecraft:stone_bricks", t.roofY[idx], null, c.biome());
+				continue;
+			}
 			byte way = t.way[idx];
 			if (way != se.itssimple.realearth.osm.Ways.NONE) {
 				// Near the player, roads and railways show in the distant terrain too.

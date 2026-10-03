@@ -586,7 +586,8 @@ final class SelfTest {
 				int villages = counts.entrySet().stream().filter(e -> e.getKey().startsWith("village")).mapToInt(java.util.Map.Entry::getValue).sum();
 				if (region[0] == startCx) {
 					// 64 x 64 chunks of central Stockholm is about 1 km square of city.
-					check(villages >= 15, "the city is covered with villages: %d in 1 km square", villages);
+					// Central Stockholm's buildings are all mapped, so they are built instead of villages.
+					check(villages <= 3, "real buildings replace villages in the city: %d villages in 1 km square", villages);
 					check(!counts.containsKey("pillager_outpost"), "no pillager outposts in the city");
 				} else {
 					check(villages == 0, "no villages out at sea");
@@ -764,6 +765,85 @@ final class SelfTest {
 			}
 			log("Västerbron: %d chunks along it, %d deck columns (%d over water), %d with a deck block", along.size(), decks, overWater, placed);
 			check(overWater > 50 && placed >= decks * 9 / 10, "Västerbron's deck stands over the water (%d of %d columns)", placed, decks);
+		}
+
+		// Buildings: central Stockholm, as planned and as built.
+		{
+			TerrainField field = RealEarth.terrain();
+			int columns = 0;
+			int maxFloors = 0;
+			int minStorey = Integer.MAX_VALUE;
+			int bestCx = 0;
+			int bestCz = 0;
+			int bestColumns = 0;
+			java.util.Set<Long> ids = new java.util.HashSet<>();
+			for (int cx = startCx - 6; cx <= startCx + 6; cx++) {
+				for (int cz = startCz - 6; cz <= startCz + 6; cz++) {
+					ChunkTerrain c;
+					try {
+						c = field.chunkBlocking(cx, cz, 120);
+					} catch (Exception e) {
+						continue;
+					}
+					int here = 0;
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							if (c.building[ChunkTerrain.index(x, z)] != 0) {
+								here++;
+							}
+						}
+					}
+					for (var plan : c.plans) {
+						ids.add(plan.id);
+						maxFloors = Math.max(maxFloors, plan.floors);
+						minStorey = Math.min(minStorey, plan.storey);
+					}
+					columns += here;
+					if (here > bestColumns) {
+						bestColumns = here;
+						bestCx = cx;
+						bestCz = cz;
+					}
+				}
+			}
+			log("buildings in 13 x 13 chunks of central Stockholm: %d buildings over %d columns; up to %d floors, storeys at least %d blocks",
+				ids.size(), columns, maxFloors, minStorey);
+			check(ids.size() > 20 && columns > 10_000, "the city's real buildings are planned");
+			check(maxFloors <= RealEarth.config().maxFloors && maxFloors >= 4 && minStorey >= 5, "floors are 5+ blocks, at most %d of them", RealEarth.config().maxFloors);
+
+			java.util.Map<String, Integer> blocks = new java.util.TreeMap<>();
+			for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
+				for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
+					LevelChunk c = earth.getChunk(cx, cz);
+					ChunkTerrain t = field.chunkIfReady(cx, cz);
+					if (t == null) {
+						continue;
+					}
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							int k = ChunkTerrain.index(x, z);
+							if (t.building[k] == 0) {
+								continue;
+							}
+							var plan = t.plans.get(t.building[k] - 1);
+							for (int y = plan.floorY; y <= t.roofY[k] + 1; y++) {
+								String name = c.getBlockState(new BlockPos(x, y, z)).getBlock().getDescriptionId().replace("block.minecraft.", "");
+								blocks.merge(name, 1, Integer::sum);
+							}
+						}
+					}
+				}
+			}
+			log("blocks in 3 x 3 chunks of buildings: %s", blocks);
+			int beds = blocks.entrySet().stream().filter(e -> e.getKey().endsWith("_bed")).mapToInt(java.util.Map.Entry::getValue).sum();
+			int doors = blocks.entrySet().stream().filter(e -> e.getKey().endsWith("_door")).mapToInt(java.util.Map.Entry::getValue).sum();
+			check(blocks.getOrDefault("glass_pane", 0) > 100 && blocks.getOrDefault("lantern", 0) > 5 && blocks.getOrDefault("air", 0) > 1000,
+				"buildings have windows, lanterns and rooms");
+			check(beds >= 2 && doors >= 6, "buildings have beds (%d) and door blocks (%d)", beds, doors);
+			var villagers = earth.getEntities(net.minecraft.world.entity.EntityType.VILLAGER,
+				new net.minecraft.world.phys.AABB((bestCx - 2) * 16, VerticalScale.MIN_Y, (bestCz - 2) * 16, (bestCx + 3) * 16, VerticalScale.MAX_Y, (bestCz + 3) * 16),
+				e -> true);
+			check(!villagers.isEmpty(), "villagers live in the buildings: %d in 5 x 5 chunks", villagers.size());
 		}
 
 		// Dry country: the Grand Canyon's walls are banded terracotta and its floor red earth, not grass.

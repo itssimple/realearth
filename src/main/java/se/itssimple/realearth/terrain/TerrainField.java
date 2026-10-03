@@ -364,11 +364,17 @@ public final class TerrainField implements AutoCloseable {
 		}
 
 		List<CompletableFuture<OsmWater.Shapes>> wayTiles = new ArrayList<>();
-		if (map != null && (config.useRoads || config.useRailways) && minX <= maxX && maxX - minX <= 4L * Mercator.TILE_SIZE) {
+		List<int[]> wayTileCoords = new ArrayList<>();
+		if (map != null && (config.useRoads || config.useRailways || config.useBuildings) && minX <= maxX && maxX - minX <= 4L * Mercator.TILE_SIZE) {
 			for (int[] w : OsmWater.tilesCovering(minX - 4, minY - 4, maxX + 4, maxY + 4)) {
 				wayTiles.add(map.tile(w[0], w[1]));
+				wayTileCoords.add(new int[] {Math.floorMod(w[0], 1 << OsmWater.ZOOM), w[1]});
 			}
 		}
+		long chunkMinX = minX;
+		long chunkMinY = minY;
+		long chunkMaxX = maxX;
+		long chunkMaxY = maxY;
 
 		CompletableFuture<WorldCover.Lookup> coverLookup = cover == null
 			? CompletableFuture.completedFuture((lat, lon) -> WorldCover.NONE)
@@ -393,10 +399,32 @@ public final class TerrainField implements AutoCloseable {
 		for (CompletableFuture<OsmWater.Shapes> f : wayTiles) {
 			all[a++] = f;
 		}
-		return CompletableFuture.allOf(all).thenApplyAsync(v -> {
-			Map<Long, ProcessedTile> tiles = new HashMap<>();
-			needed.forEach((key, f) -> tiles.put(key, f.join()));
-			WorldCover.Lookup landCover = coverLookup.join();
+		return CompletableFuture.allOf(all).thenCompose(v -> {
+			// Buildings stand on the ground under their whole footprint, which may reach well beyond
+			// this chunk: fetch the terrain there too before going on.
+			List<OsmWater.Shapes> shapes = wayTiles.stream().map(CompletableFuture::join).toList();
+			List<Buildings.Candidate> candidates = config.useBuildings
+				? Buildings.near(this, wayTileCoords, shapes, chunkX, chunkZ, chunkMinX, chunkMinY, chunkMaxX, chunkMaxY)
+				: List.of();
+			Map<Long, CompletableFuture<ProcessedTile>> withBuildings = new HashMap<>(needed);
+			for (Buildings.Candidate c : candidates) {
+				for (double[] p : Buildings.heightPoints(c)) {
+					addTiles(withBuildings, (long) Math.floor(p[0]) - 2, (long) Math.floor(p[0]) + 3, (long) Math.floor(p[1]) - 2, (long) Math.floor(p[1]) + 3);
+				}
+			}
+			return CompletableFuture.allOf(withBuildings.values().toArray(CompletableFuture[]::new)).thenApplyAsync(w -> {
+				Map<Long, ProcessedTile> all2 = new HashMap<>();
+				withBuildings.forEach((key, f) -> all2.put(key, f.join()));
+				return build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, sx, sy, onGlobe, chunkX, chunkZ);
+			}, workers);
+		});
+	}
+
+	/** The chunk's terrain from everything fetched for it. */
+	private ChunkTerrain build(ChunkTerrain terrain, Map<Long, ProcessedTile> tiles, java.util.Set<Long> own, WorldCover.Lookup landCover,
+		List<OsmWater.Shapes> shapes, List<Buildings.Candidate> candidates, double[] sx, double[] sy, boolean[] onGlobe, int chunkX, int chunkZ) {
+		int n = ChunkTerrain.SPAN;
+		{
 			terrain.degraded = landCover.degraded() || tiles.values().stream().anyMatch(t -> t.degraded);
 			Koppen climate = Koppen.get();
 			for (int k = 0; k < n * n; k++) {
@@ -410,20 +438,24 @@ public final class TerrainField implements AutoCloseable {
 					terrain.waterMeters[k] = 0f;
 				}
 			}
-			if (!wayTiles.isEmpty()) {
+			if (!shapes.isEmpty()) {
 				List<OsmWater.Way> ways = new ArrayList<>();
-				for (CompletableFuture<OsmWater.Shapes> f : wayTiles) {
-					OsmWater.Shapes s = f.join();
+				for (OsmWater.Shapes s : shapes) {
 					terrain.degraded |= s.failed();
 					ways.addAll(s.ways());
 				}
-				WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, chunkX, chunkZ, config.useRoads, config.useRailways);
+				if (config.useRoads || config.useRailways) {
+					WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, chunkX, chunkZ, config.useRoads, config.useRailways);
+				}
 			}
 			for (int k = 0; k < n * n; k++) {
 				finishColumn(terrain, k);
 			}
+			if (!candidates.isEmpty()) {
+				Buildings.plan(this, terrain, candidates, tiles, sx, sy, onGlobe, chunkX, chunkZ, config.storeyMeters, config.maxFloors);
+			}
 			return terrain;
-		}, workers);
+		}
 	}
 
 	private void addTiles(Map<Long, CompletableFuture<ProcessedTile>> out, long minX, long maxX, long minY, long maxY) {

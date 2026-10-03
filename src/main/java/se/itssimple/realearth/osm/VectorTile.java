@@ -24,6 +24,12 @@ public final class VectorTile {
 			return v == null ? null : v.toString();
 		}
 
+		/** A numeric tag, or NaN when absent or not a number. */
+		public double number(String key) {
+			Object v = tags.get(key);
+			return v instanceof Number n ? n.doubleValue() : Double.NaN;
+		}
+
 		public boolean flag(String key) {
 			Object v = tags.get(key);
 			return v instanceof Number n ? n.longValue() != 0 : v instanceof Boolean b ? b : v != null && "1".equals(v.toString());

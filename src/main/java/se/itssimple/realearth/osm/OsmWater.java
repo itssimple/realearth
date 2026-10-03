@@ -31,7 +31,7 @@ import se.itssimple.realearth.geo.Mercator;
  */
 public final class OsmWater {
 	public static final int ZOOM = 14;
-	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation");
+	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building");
 
 	/** A water area: rings of interleaved x,y in global z15 sample coordinates. Even-odd filled. */
 	public record Area(List<double[]> rings, boolean sea) {
@@ -49,14 +49,22 @@ public final class OsmWater {
 	}
 
 	/**
+	 * A building footprint: rings of interleaved x,y in global z15 sample coordinates (even-odd), its
+	 * height in metres (NaN when the map doesn't say), and its bounding box. Its index in the tile is
+	 * stable, so tile and index identify it.
+	 */
+	public record Building(List<double[]> rings, double heightMeters, int index, double minX, double minY, double maxX, double maxY) {
+	}
+
+	/**
 	 * The water and ways in one zoom-14 tile. {@code known} is false when the map has no tile or could
 	 * not be fetched.
 	 */
-	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways) {
+	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
-		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of());
+		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
-		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of());
+		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -176,6 +184,7 @@ public final class OsmWater {
 		List<Area> areas = new ArrayList<>();
 		List<Line> lines = new ArrayList<>();
 		List<Way> ways = new ArrayList<>();
+		List<Building> buildings = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
 			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
 				continue;
@@ -190,6 +199,27 @@ public final class OsmWater {
 					d[i + 1] = tileY * samplesPerTile + p[i + 1] * scale - 0.5;
 				}
 				parts.add(d);
+			}
+			if (f.layer().equals("building") && f.type() == VectorTile.POLYGON) {
+				// Parts that float (render_min_height above 0) are upper storeys of something else.
+				double base = f.number("render_min_height");
+				if (f.flag("hide_3d") || (!Double.isNaN(base) && base > 0.5)) {
+					continue;
+				}
+				double minX = Double.MAX_VALUE;
+				double minY = Double.MAX_VALUE;
+				double maxX = -Double.MAX_VALUE;
+				double maxY = -Double.MAX_VALUE;
+				for (double[] ring : parts) {
+					for (int i = 0; i < ring.length; i += 2) {
+						minX = Math.min(minX, ring[i]);
+						maxX = Math.max(maxX, ring[i]);
+						minY = Math.min(minY, ring[i + 1]);
+						maxY = Math.max(maxY, ring[i + 1]);
+					}
+				}
+				buildings.add(new Building(parts, f.number("render_height"), buildings.size(), minX, minY, maxX, maxY));
+				continue;
 			}
 			if (f.layer().equals("water") && f.type() == VectorTile.POLYGON) {
 				if ("swimming_pool".equals(cls)) {
@@ -233,7 +263,7 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true, ways);
+		return new Shapes(areas, lines, true, ways, buildings);
 	}
 
 	/** The zoom-14 tiles covering a range of global z15 sample coordinates. */

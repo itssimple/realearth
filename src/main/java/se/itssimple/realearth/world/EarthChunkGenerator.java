@@ -123,7 +123,10 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		}
 	}
 
-	/** Pillager outposts belong in the wild, not in the middle of a town full of villagers. */
+	/**
+	 * Pillager outposts belong in the wild, not in the middle of a town full of villagers; and where the
+	 * town's real buildings are mapped, they are built instead of vanilla's villages.
+	 */
 	private static void removeOutpostsFromTowns(RegistryAccess registryAccess, ChunkAccess chunk) {
 		var starts = chunk.getAllStarts();
 		if (starts.isEmpty()) {
@@ -131,13 +134,20 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		}
 		var structures = registryAccess.lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
 		var outpost = structures.getValue(net.minecraft.world.level.levelgen.structure.BuiltinStructures.PILLAGER_OUTPOST);
-		if (outpost == null || !starts.containsKey(outpost)) {
-			return;
-		}
 		ChunkPos pos = chunk.getPos();
-		if (BuiltUpPlacement.builtShare(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 96) > 0.15) {
-			var kept = new java.util.HashMap<>(starts);
+		var kept = new java.util.HashMap<>(starts);
+		boolean changed = false;
+		if (outpost != null && starts.containsKey(outpost)
+			&& BuiltUpPlacement.builtShare(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 96) > 0.15) {
 			kept.remove(outpost);
+			changed = true;
+		}
+		boolean village = starts.keySet().stream().anyMatch(s -> structures.getKey(s) != null && structures.getKey(s).getPath().startsWith("village_"));
+		if (village && BuiltUpPlacement.mappedBuildings(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 64) >= BuiltUpPlacement.BUILDINGS_REPLACE_VILLAGE) {
+			kept.keySet().removeIf(s -> structures.getKey(s) != null && structures.getKey(s).getPath().startsWith("village_"));
+			changed = true;
+		}
+		if (changed) {
 			chunk.setAllStarts(kept);
 		}
 	}
@@ -377,6 +387,10 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			}
 		}
 
+		// Buildings, then the life between them: wells, farms, lamps, bells.
+		int[] buildingTop = BuildingPainter.paint(chunk, t, baseX, baseZ);
+		TownFeatures.place(chunk, t, baseX, baseZ, buildingTop);
+
 		Heightmap oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
 		Heightmap worldSurface = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
 		BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
@@ -384,7 +398,7 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			for (int x = 0; x < 16; x++) {
 				Column c = columns[z * 16 + x];
 				int from = beardBox != null ? Math.max(maxSurface, Math.max(c.top, c.waterTop)) : Math.max(c.top, c.waterTop);
-				from = Math.max(from, deckTop[z * 16 + x]);
+				from = Math.max(from, Math.max(deckTop[z * 16 + x], buildingTop[z * 16 + x]));
 				for (int y = from; y >= c.top - 64 && y > minY; y--) {
 					BlockState state = chunk.getBlockState(probe.set(x, y, z));
 					if (!state.isAir()) {
@@ -507,6 +521,11 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 
 		// Caves must not open into the sea or a lake from the side: a dry column next to water is sealed.
 		boolean shore = t.nextToWater(x, z);
+
+		// Under a building: plain ground, kept clear of caves; the building itself comes later.
+		if (t.building[k] != 0) {
+			return new Column(top, waterTop, dirt, dirt, 3, STONE, true, null);
+		}
 
 		byte way = t.way[k];
 		if (way != Ways.NONE) {
@@ -707,6 +726,38 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
 		random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
 		NaturalSpawner.spawnMobsForChunkGeneration(region, biome, center, random);
+		moveInVillagers(region, center);
+	}
+
+	/** Most villagers that move into one chunk's houses; a dense city would otherwise crowd the server. */
+	private static final int VILLAGERS_PER_CHUNK = 3;
+
+	/** Villagers move into a share of the beds built in this chunk; they find their trades themselves. */
+	private static void moveInVillagers(WorldGenRegion region, ChunkPos center) {
+		TerrainField field = RealEarth.terrain();
+		ChunkTerrain t = field == null ? null : field.chunkIfReady(center.x(), center.z());
+		if (t == null || t.beds.isEmpty()) {
+			return;
+		}
+		double share = RealEarth.config().villagerShare;
+		int moved = 0;
+		for (int[] bed : t.beds) {
+			if (moved >= VILLAGERS_PER_CHUNK) {
+				break;
+			}
+			if (GeoNoise.hash(bed[0], bed[1], bed[2]) >= share) {
+				continue;
+			}
+			var villager = net.minecraft.world.entity.EntityType.VILLAGER.create(region.getLevel(), net.minecraft.world.entity.EntitySpawnReason.STRUCTURE);
+			if (villager == null) {
+				continue;
+			}
+			villager.snapTo(bed[0] + 0.5, bed[1], bed[2] + 0.5, 0, 0);
+			villager.finalizeSpawn(region, region.getCurrentDifficultyAt(villager.blockPosition()), net.minecraft.world.entity.EntitySpawnReason.STRUCTURE, null);
+			villager.setPersistenceRequired();
+			region.addFreshEntityWithPassengers(villager);
+			moved++;
+		}
 	}
 
 	@Override

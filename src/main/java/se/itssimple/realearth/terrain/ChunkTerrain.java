@@ -48,6 +48,20 @@ public final class ChunkTerrain {
 	/** Y of the bridge deck block, or Integer.MIN_VALUE. */
 	public final int[] deckY = new int[SPAN * SPAN];
 
+	/** Buildings reaching into this chunk; {@link #building} indexes it from 1. */
+	public volatile java.util.List<BuildingPlan> plans = java.util.List.of();
+	/** Which building stands on each column, 1-based into {@link #plans}; 0 for none. */
+	public final short[] building = new short[SPAN * SPAN];
+	/** Top of the building's roof on each column, for distant terrain; meaningless where there is none. */
+	public final int[] roofY = new int[SPAN * SPAN];
+	/** Beds built in this chunk, as world x, y, z of the foot: where villagers move in. */
+	public volatile java.util.List<int[]> beds = java.util.List.of();
+
+	public BuildingPlan buildingAt(int localX, int localZ) {
+		int b = building[index(localX, localZ)];
+		return b == 0 ? null : plans.get(b - 1);
+	}
+
 	{
 		java.util.Arrays.fill(deckMeters, Float.NaN);
 		java.util.Arrays.fill(deckY, Integer.MIN_VALUE);
