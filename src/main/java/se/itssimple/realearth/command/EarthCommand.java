@@ -34,6 +34,7 @@ import se.itssimple.realearth.terrain.TerrainField;
  * /earth repair [all]       -- regenerate chunks that were generated offline from placeholder data
  * /earth cache [clear]      -- how big the download cache is; delete it
  * /earth credits            -- where Earth's data comes from, as its licences ask
+ * /earth perf [reset]       -- time spent in each stage of generating Earth, for finding what is slow
  */
 public final class EarthCommand {
 	private EarthCommand() {
@@ -52,6 +53,18 @@ public final class EarthCommand {
 	public static void register(CommandDispatcher<CommandSourceStack> dispatcher, int teleportPermissionLevel) {
 		dispatcher.register(Commands.literal("earth")
 			.then(Commands.literal("where").executes(ctx -> where(ctx.getSource())))
+			.then(Commands.literal("perf")
+				.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+				.executes(ctx -> {
+					ctx.getSource().sendSuccess(() -> Component.literal("Generation time by stage, since start or reset (ms/runs): "
+						+ se.itssimple.realearth.Perf.report()), false);
+					return 1;
+				})
+				.then(Commands.literal("reset").executes(ctx -> {
+					se.itssimple.realearth.Perf.reset();
+					ctx.getSource().sendSuccess(() -> Component.literal("Generation timers reset."), false);
+					return 1;
+				})))
 			.then(Commands.literal("credits").executes(ctx -> {
 				ctx.getSource().sendSuccess(() -> Component.literal("Real Earth is built from open data:"), false);
 				for (Component line : se.itssimple.realearth.Credits.full()) {

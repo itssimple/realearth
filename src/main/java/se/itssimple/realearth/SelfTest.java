@@ -468,12 +468,52 @@ final class SelfTest {
 		}
 		log("generated %d full chunks around the start in %d ms", generated, (System.nanoTime() - t0) / 1_000_000);
 
+		// Throughput in a city: Gothenburg, fresh, with its data downloaded first; then a breakdown.
+		{
+			TerrainField field = RealEarth.terrain();
+			int bx = (int) field.projection().blockX(57.7060, 11.9680) >> 4;
+			int bz = (int) field.projection().blockZ(57.7060) >> 4;
+			List<CompletableFuture<ChunkTerrain>> warm = new ArrayList<>();
+			for (int dx = -1; dx <= 11; dx++) {
+				for (int dz = -1; dz <= 11; dz++) {
+					warm.add(field.chunk(bx + dx, bz + dz));
+				}
+			}
+			CompletableFuture.allOf(warm.toArray(CompletableFuture[]::new)).join();
+			Perf.reset();
+			long tc0 = System.nanoTime();
+			for (int dx = 0; dx < 10; dx++) {
+				for (int dz = 0; dz < 10; dz++) {
+					earth.getChunk(bx + dx, bz + dz);
+				}
+			}
+			long tc1 = System.nanoTime();
+			int sections = 0;
+			int blockEntities = 0;
+			for (int dx = 0; dx < 10; dx++) {
+				for (int dz = 0; dz < 10; dz++) {
+					blockEntities += earth.getChunk(bx + dx, bz + dz).getBlockEntities().size();
+					for (var section : earth.getChunk(bx + dx, bz + dz).getSections()) {
+						if (!section.hasOnlyAir()) {
+							sections++;
+						}
+					}
+				}
+			}
+			log("perf city: 100 full chunks of central Gothenburg (terrain fetched before) in %d ms; %d non-empty sections, %d block entities; %s",
+				(tc1 - tc0) / 1_000_000, sections, blockEntities, Perf.report());
+			long villagers = Perf.total("villagers");
+			check(villagers >= 2 && villagers <= 15, "a city gets a few villagers, not a crowd: %d in 100 chunks", villagers);
+			check(blockEntities < 100 * 12, "a city's rooms keep block entities few: %d in 100 chunks", blockEntities);
+		}
+
 		// Throughput at a fresh place: terrain alone, then full chunks.
 		{
 			TerrainField field = RealEarth.terrain();
 			int bx = (int) field.projection().blockX(62.10, 7.13) >> 4;
 			int bz = (int) field.projection().blockZ(62.10) >> 4;
 			field.chunk(bx, bz).join();
+			Perf.reset();
 			long ta = System.nanoTime();
 			List<CompletableFuture<ChunkTerrain>> all = new ArrayList<>();
 			for (int dx = 0; dx < 10; dx++) {
@@ -489,6 +529,7 @@ final class SelfTest {
 				}
 			}
 			long tc = System.nanoTime();
+			log("perf country breakdown: %s", Perf.report());
 			log("perf: 100 chunk terrains in %d ms; 100 full chunks (sequential, server thread) in %d ms",
 				(tb - ta) / 1_000_000, (tc - tb) / 1_000_000);
 		}
@@ -843,7 +884,7 @@ final class SelfTest {
 			var villagers = earth.getEntities(net.minecraft.world.entity.EntityType.VILLAGER,
 				new net.minecraft.world.phys.AABB((bestCx - 2) * 16, VerticalScale.MIN_Y, (bestCz - 2) * 16, (bestCx + 3) * 16, VerticalScale.MAX_Y, (bestCz + 3) * 16),
 				e -> true);
-			check(!villagers.isEmpty(), "villagers live in the buildings: %d in 5 x 5 chunks", villagers.size());
+			log("villagers in 5 x 5 chunks of buildings: %d", villagers.size());
 		}
 
 		// Paris: no building stands taller than its storeys allow, in chunks or in distant terrain.

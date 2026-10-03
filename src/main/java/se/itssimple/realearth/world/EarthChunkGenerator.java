@@ -115,11 +115,13 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			}
 		}
 		GenContext.EXACT.set(Boolean.TRUE);
+		long started = se.itssimple.realearth.Perf.start();
 		try {
 			super.createStructures(registryAccess, state, structureManager, chunk, templates, level);
 			removeOutpostsFromTowns(registryAccess, chunk);
 		} finally {
 			GenContext.EXACT.remove();
+			se.itssimple.realearth.Perf.stop("structures", started);
 		}
 	}
 
@@ -179,7 +181,9 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 				recordDegraded(pos);
 				return chunk;
 			}
+			long started = se.itssimple.realearth.Perf.start();
 			fill(chunk, terrain, randomState, structureManager);
+			se.itssimple.realearth.Perf.stop("fill", started);
 			if (terrain.degraded) {
 				recordDegraded(pos);
 			}
@@ -388,8 +392,10 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		}
 
 		// Buildings, then the life between them: wells, farms, lamps, bells.
+		long painting = se.itssimple.realearth.Perf.start();
 		int[] buildingTop = BuildingPainter.paint(chunk, t, baseX, baseZ);
 		TownFeatures.place(chunk, t, baseX, baseZ, buildingTop);
+		se.itssimple.realearth.Perf.stop("fill.buildings", painting);
 
 		Heightmap oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
 		Heightmap worldSurface = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
@@ -725,28 +731,27 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		Holder<Biome> biome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
 		WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
 		random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
+		long started = se.itssimple.realearth.Perf.start();
 		NaturalSpawner.spawnMobsForChunkGeneration(region, biome, center, random);
 		moveInVillagers(region, center);
+		se.itssimple.realearth.Perf.stop("mobs", started);
 	}
 
-	/** Most villagers that move into one chunk's houses; a dense city would otherwise crowd the server. */
-	private static final int VILLAGERS_PER_CHUNK = 3;
-
-	/** Villagers move into a share of the beds built in this chunk; they find their trades themselves. */
+	/**
+	 * A villager moves into one of this chunk's beds, in some of the chunks that have beds (see
+	 * villagerChance), about one chunk of town in ten: enough for a town to feel lived in, few enough that a city of thousands of
+	 * chunks doesn't bring the server to its knees. They find their trades themselves.
+	 */
 	private static void moveInVillagers(WorldGenRegion region, ChunkPos center) {
 		TerrainField field = RealEarth.terrain();
 		ChunkTerrain t = field == null ? null : field.chunkIfReady(center.x(), center.z());
-		if (t == null || t.beds.isEmpty()) {
+		if (t == null || t.beds.isEmpty() || GeoNoise.hash(center.x(), 71, center.z()) >= RealEarth.config().villagerChance) {
 			return;
 		}
-		double share = RealEarth.config().villagerShare;
 		int moved = 0;
 		for (int[] bed : t.beds) {
-			if (moved >= VILLAGERS_PER_CHUNK) {
+			if (moved >= 1) {
 				break;
-			}
-			if (GeoNoise.hash(bed[0], bed[1], bed[2]) >= share) {
-				continue;
 			}
 			var villager = net.minecraft.world.entity.EntityType.VILLAGER.create(region.getLevel(), net.minecraft.world.entity.EntitySpawnReason.STRUCTURE);
 			if (villager == null) {
@@ -757,7 +762,15 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			villager.setPersistenceRequired();
 			region.addFreshEntityWithPassengers(villager);
 			moved++;
+			se.itssimple.realearth.Perf.count("villagers", 1);
 		}
+	}
+
+	@Override
+	public void applyBiomeDecoration(net.minecraft.world.level.WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
+		long started = se.itssimple.realearth.Perf.start();
+		super.applyBiomeDecoration(level, chunk, structureManager);
+		se.itssimple.realearth.Perf.stop("features", started);
 	}
 
 	@Override

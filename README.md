@@ -49,7 +49,9 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   - Windows, corner posts, a front door towards the nearest street and more doors on long walls, ladders
     between storeys; small buildings get hipped roofs, large ones flat roofs with a parapet.
   - Furnished: beds, chests, crafting tables, furnaces, barrels, bookshelves, flower pots, lanterns, and villager
-    job blocks. Villagers move into some of the beds and take up the trades they find.
+    job blocks. A villager moves into about one chunk of town in twenty and takes up the trade it finds: enough
+    to feel lived in, few enough that a city doesn't slow the server down. Beds, chests and furnaces are kept
+    rare for the same reason (they are drawn as models or tick).
   - Between them: wells, farm plots, bells on their posts, hay stores, and street lamps along the streets.
   - Each building stands level, on the ground under its whole footprint: a foundation on the low side, dug in on
     the high side.
@@ -101,6 +103,7 @@ The frame and activator are tags, so a datapack can change them: `realearth:port
 | `/earth cache` | Cache size per source, this session's downloads, network state, chunks waiting for repair |
 | `/earth cache clear` | Delete the whole download cache (permission level 4) |
 | `/earth credits` | Where Earth's data comes from, with links (everyone) |
+| `/earth perf [reset]` | Time spent in each stage of generating Earth, for finding what is slow |
 
 `download`, `repair` and `cache` need permission level 2.
 
@@ -277,7 +280,7 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `useRoads`, `useRailways` | true, true | Roads, tracks and paths; railways and trams (need `useMapWater`'s map tiles) |
 | `useBuildings` | true | Build the map's buildings (and no villages where they are) |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
-| `villagerShare` | 0.4 | Share of beds that come with a villager (at most 3 villagers per chunk) |
+| `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |
 | `lakeWindowSamples`, `lakeFlatnessMeters` | 17, 0.02 | How large and how flat a lake must be |
 | `maxLakeDepthMeters` | 12 | Deepest carved lake bed |

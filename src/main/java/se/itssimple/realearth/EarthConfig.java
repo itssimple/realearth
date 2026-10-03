@@ -89,8 +89,11 @@ public final class EarthConfig {
 	public double storeyMeters = 4.5;
 	/** Most storeys a building gets. */
 	public int maxFloors = 10;
-	/** Share of beds that come with a villager. */
-	public double villagerShare = 0.4;
+	/**
+	 * Chance that a chunk with beds in it gets a villager (one). Villagers are costly to simulate, and a
+	 * city has thousands of chunks of houses: about one chunk of town in twenty ends up with one.
+	 */
+	public double villagerChance = 0.2;
 	public String landCoverUrl = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif";
 
 	/** Lakes are perfectly flat in the source data; this finds them and fills them with water. Used where map water is not. */

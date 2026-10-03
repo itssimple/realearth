@@ -404,11 +404,16 @@ public final class TerrainField implements AutoCloseable {
 			// Buildings stand on the ground under their whole footprint, which may reach well beyond
 			// this chunk: fetch the terrain there too before going on.
 			List<OsmWater.Shapes> shapes = wayTiles.stream().map(CompletableFuture::join).toList();
+			long nearing = se.itssimple.realearth.Perf.start();
 			List<Buildings.Candidate> candidates = config.useBuildings
 				? Buildings.near(this, wayTileCoords, shapes, chunkX, chunkZ, chunkMinX, chunkMinY, chunkMaxX, chunkMaxY)
 				: List.of();
+			se.itssimple.realearth.Perf.stop("terrain.buildings.near", nearing);
 			Map<Long, CompletableFuture<ProcessedTile>> withBuildings = new HashMap<>(needed);
 			for (Buildings.Candidate c : candidates) {
+				if (c.planned()) {
+					continue;
+				}
 				for (double[] p : Buildings.heightPoints(c)) {
 					addTiles(withBuildings, (long) Math.floor(p[0]) - 2, (long) Math.floor(p[0]) + 3, (long) Math.floor(p[1]) - 2, (long) Math.floor(p[1]) + 3);
 				}
@@ -416,7 +421,10 @@ public final class TerrainField implements AutoCloseable {
 			return CompletableFuture.allOf(withBuildings.values().toArray(CompletableFuture[]::new)).thenApplyAsync(w -> {
 				Map<Long, ProcessedTile> all2 = new HashMap<>();
 				withBuildings.forEach((key, f) -> all2.put(key, f.join()));
-				return build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, sx, sy, onGlobe, chunkX, chunkZ);
+				long started = se.itssimple.realearth.Perf.start();
+				ChunkTerrain built = build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, sx, sy, onGlobe, chunkX, chunkZ);
+				se.itssimple.realearth.Perf.stop("terrain", started);
+				return built;
 			}, workers);
 		});
 	}
@@ -446,14 +454,18 @@ public final class TerrainField implements AutoCloseable {
 					ways.addAll(s.ways());
 				}
 				if (config.useRoads || config.useRailways) {
+					long started = se.itssimple.realearth.Perf.start();
 					WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, chunkX, chunkZ, config.useRoads, config.useRailways);
+					se.itssimple.realearth.Perf.stop("terrain.ways", started);
 				}
 			}
 			for (int k = 0; k < n * n; k++) {
 				finishColumn(terrain, k);
 			}
 			if (!candidates.isEmpty()) {
+				long started = se.itssimple.realearth.Perf.start();
 				Buildings.plan(this, terrain, candidates, tiles, sx, sy, onGlobe, chunkX, chunkZ, config.storeyMeters, config.maxFloors);
+				se.itssimple.realearth.Perf.stop("terrain.buildings", started);
 			}
 			return terrain;
 		}

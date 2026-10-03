@@ -201,5 +201,14 @@ final class TownFeatures {
 			return;
 		}
 		chunk.setBlockState(pos.set(x, y, z), s, 0);
+		// Blocks set straight into a chunk get no block entity of their own: a bed, chest or bell would
+		// be invisible or dead. Make it here, at the block's place in the world.
+		if (s.hasBlockEntity() && s.getBlock() instanceof net.minecraft.world.level.block.EntityBlock entityBlock) {
+			BlockPos at = new BlockPos(chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z);
+			var entity = entityBlock.newBlockEntity(at, s);
+			if (entity != null) {
+				chunk.setBlockEntity(entity);
+			}
+		}
 	}
 }

@@ -35,9 +35,9 @@ final class BuildingPainter {
 
 	private static final Block[] BEDS = {Blocks.RED_BED, Blocks.WHITE_BED, Blocks.BLUE_BED, Blocks.GREEN_BED, Blocks.YELLOW_BED, Blocks.LIGHT_GRAY_BED,
 		Blocks.BROWN_BED, Blocks.CYAN_BED};
-	/** Villager workstations: whoever moves in takes up that trade. */
-	private static final Block[] JOBS = {Blocks.COMPOSTER, Blocks.SMOKER, Blocks.BLAST_FURNACE, Blocks.CARTOGRAPHY_TABLE, Blocks.BREWING_STAND,
-		Blocks.FLETCHING_TABLE, Blocks.LECTERN, Blocks.LOOM, Blocks.SMITHING_TABLE, Blocks.STONECUTTER, Blocks.GRINDSTONE, Blocks.CAULDRON, Blocks.BARREL};
+	/** Villager workstations: whoever moves in takes up that trade. Mostly ones that don't tick. */
+	private static final Block[] JOBS = {Blocks.COMPOSTER, Blocks.CARTOGRAPHY_TABLE, Blocks.FLETCHING_TABLE, Blocks.LECTERN, Blocks.LOOM,
+		Blocks.SMITHING_TABLE, Blocks.STONECUTTER, Blocks.GRINDSTONE, Blocks.CAULDRON, Blocks.BARREL, Blocks.SMOKER};
 	private static final Block[] FLOWERS = {Blocks.POTTED_POPPY, Blocks.POTTED_DANDELION, Blocks.POTTED_BLUE_ORCHID, Blocks.POTTED_FERN,
 		Blocks.POTTED_AZURE_BLUET, Blocks.POTTED_OXEYE_DAISY};
 
@@ -183,29 +183,31 @@ final class BuildingPainter {
 		if (wallSide(in, x, z) < 0 || isLadder(p, in, x, z, wx, wz) || (floor == 0 && nearDoor(p, wx, wz))) {
 			return Item.NONE;
 		}
+		// Beds and chests are drawn as animated models and furnaces tick, so they are kept few: a city has
+		// thousands of rooms in view. Plain blocks (barrels, bookshelves, crafting tables) carry the rest.
 		double h = p.hash(wx, floor, wz, 1);
-		if (h < 0.07) {
+		if (h < 0.012) {
 			return Item.BED;
 		}
-		if (h < 0.11) {
+		if (h < 0.018) {
 			return Item.CHEST;
 		}
-		if (h < 0.14) {
+		if (h < 0.05) {
 			return Item.CRAFTING;
 		}
-		if (h < 0.17) {
+		if (h < 0.058) {
 			return Item.FURNACE;
 		}
-		if (h < 0.20) {
+		if (h < 0.10) {
 			return Item.BARREL;
 		}
-		if (h < 0.25) {
+		if (h < 0.16) {
 			return Item.BOOKSHELF;
 		}
-		if (h < 0.29) {
+		if (h < 0.18) {
 			return Item.JOB;
 		}
-		if (h < 0.32) {
+		if (h < 0.22) {
 			return Item.FLOWER;
 		}
 		return Item.NONE;
@@ -411,5 +413,14 @@ final class BuildingPainter {
 			return;
 		}
 		chunk.setBlockState(pos.set(x, y, z), s, 0);
+		// Blocks set straight into a chunk get no block entity of their own: a bed, chest or bell would
+		// be invisible or dead. Make it here, at the block's place in the world.
+		if (s.hasBlockEntity() && s.getBlock() instanceof net.minecraft.world.level.block.EntityBlock entityBlock) {
+			BlockPos at = new BlockPos(chunk.getPos().getMinBlockX() + x, y, chunk.getPos().getMinBlockZ() + z);
+			var entity = entityBlock.newBlockEntity(at, s);
+			if (entity != null) {
+				chunk.setBlockEntity(entity);
+			}
+		}
 	}
 }

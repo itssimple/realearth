@@ -46,6 +46,10 @@ final class Buildings {
 	}
 
 	record Candidate(OsmWater.Building building, int tileX, int tileY, List<double[]> blockRings, List<OsmWater.Way> ways) {
+		/** True when this building was planned before, so neither its outline nor its ground need working out again. */
+		boolean planned() {
+			return PLANS.containsKey(BuildingPlan.idOf(tileX, tileY, building));
+		}
 	}
 
 	/** Buildings of the given map tiles whose footprint reaches into the chunk (or its one-block border). */
@@ -58,6 +62,13 @@ final class Buildings {
 			OsmWater.Shapes s = shapes.get(t);
 			for (OsmWater.Building b : s.buildings()) {
 				if (b.maxX() < minSX - 2 || b.minX() > maxSX + 2 || b.maxY() < minSY - 2 || b.minY() > maxSY + 2) {
+					continue;
+				}
+				BuildingPlan known = PLANS.get(BuildingPlan.idOf(tiles.get(t)[0], tiles.get(t)[1], b));
+				if (known != null) {
+					if (known.maxX >= baseX - 1 && known.minX <= baseX + 17 && known.maxZ >= baseZ - 1 && known.minZ <= baseZ + 17) {
+						out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], known.rings, s.ways()));
+					}
 					continue;
 				}
 				List<double[]> rings = new ArrayList<>(b.rings().size());
@@ -129,6 +140,7 @@ final class Buildings {
 		List<BuildingPlan> plans = new ArrayList<>();
 		List<Candidate> planned = new ArrayList<>();
 		Koppen koppen = Koppen.get();
+		long planning = se.itssimple.realearth.Perf.start();
 		for (Candidate c : candidates) {
 			long cachedId = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
 			BuildingPlan cached = PLANS.get(cachedId);
@@ -171,41 +183,66 @@ final class Buildings {
 			plans.add(plan);
 			planned.add(c);
 		}
+		se.itssimple.realearth.Perf.stop("terrain.buildings.plan", planning);
 		if (plans.isEmpty()) {
 			return;
 		}
+		long marking = se.itssimple.realearth.Perf.start();
 
 		int n = ChunkTerrain.SPAN;
 		int baseX = chunkX * 16;
 		int baseZ = chunkZ * 16;
 		double perTile = Mercator.TILE_SIZE * (double) (1 << (Mercator.ZOOM - OsmWater.ZOOM));
-		for (int j = 0; j < n; j++) {
-			for (int i = 0; i < n; i++) {
-				int k = j * n + i;
-				if (!onGlobe[k]) {
-					continue;
+		// Each column's own map tile: only that tile's copy of a building may claim it.
+		int[] tileX = new int[n * n];
+		int[] tileY = new int[n * n];
+		for (int k = 0; k < n * n; k++) {
+			tileX[k] = Math.floorMod((int) Math.floor((sx[k] + 0.5) / perTile), 1 << OsmWater.ZOOM);
+			tileY[k] = (int) Math.floor((sy[k] + 0.5) / perTile);
+		}
+		// Each footprint filled row by row (even-odd, from the crossings of its edges with the row),
+		// over the chunk and its border only.
+		double[] cross = new double[64];
+		for (int p = 0; p < plans.size(); p++) {
+			BuildingPlan plan = plans.get(p);
+			Candidate c = planned.get(p);
+			int j0 = Math.max(0, (int) Math.floor(plan.minZ - 0.5) - baseZ + 1);
+			int j1 = Math.min(n - 1, (int) Math.ceil(plan.maxZ - 0.5) - baseZ + 1);
+			for (int j = j0; j <= j1; j++) {
+				double z = baseZ + j - 1 + 0.5;
+				int count = 0;
+				for (double[] r : plan.rings) {
+					int m = r.length / 2;
+					for (int e = 0, f = m - 1; e < m; f = e++) {
+						double za = r[e * 2 + 1];
+						double zb = r[f * 2 + 1];
+						if ((za > z) != (zb > z)) {
+							if (count == cross.length) {
+								cross = java.util.Arrays.copyOf(cross, count * 2);
+							}
+							cross[count++] = r[e * 2] + (z - za) / (zb - za) * (r[f * 2] - r[e * 2]);
+						}
+					}
 				}
-				int wx = baseX + i - 1;
-				int wz = baseZ + j - 1;
-				int tileX = (int) Math.floor((sx[k] + 0.5) / perTile);
-				int tileY = (int) Math.floor((sy[k] + 0.5) / perTile);
-				for (int p = 0; p < plans.size(); p++) {
-					BuildingPlan plan = plans.get(p);
-					Candidate c = planned.get(p);
-					if (c.tileX() != Math.floorMod(tileX, 1 << OsmWater.ZOOM) || c.tileY() != tileY) {
-						continue;
+				java.util.Arrays.sort(cross, 0, count);
+				for (int q = 0; q + 1 < count; q += 2) {
+					// Columns whose centre lies in [cross[q], cross[q + 1]).
+					int i0 = Math.max(0, (int) Math.ceil(cross[q] - 0.5) - baseX + 1);
+					int i1 = Math.min(n - 1, (int) Math.ceil(cross[q + 1] - 0.5) - 1 - baseX + 1);
+					for (int i = i0; i <= i1; i++) {
+						int k = j * n + i;
+						if (!onGlobe[k] || t.building[k] != 0 || tileX[k] != c.tileX() || tileY[k] != c.tileY()) {
+							continue;
+						}
+						t.building[k] = (short) (p + 1);
+						t.way[k] = Ways.NONE;
+						t.roofY[k] = plan.roofBaseY() + plan.roofRise;
 					}
-					if (wx + 0.5 < plan.minX || wx + 0.5 > plan.maxX || wz + 0.5 < plan.minZ || wz + 0.5 > plan.maxZ || !plan.contains(wx, wz)) {
-						continue;
-					}
-					t.building[k] = (short) (p + 1);
-					t.way[k] = Ways.NONE;
-					t.roofY[k] = plan.roofBaseY() + plan.roofRise;
-					break;
 				}
 			}
 		}
 		t.plans = plans;
+		se.itssimple.realearth.Perf.stop("terrain.buildings.mark", marking);
 	}
 
 	/** The village style for a climate: the same choice as the biome of built-up land. */
