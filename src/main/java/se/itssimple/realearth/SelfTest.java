@@ -427,6 +427,14 @@ final class SelfTest {
 		deleteTree(scratch);
 	}
 
+	private static double length(double[] p) {
+		double l = 0;
+		for (int i = 0; i + 3 < p.length; i += 2) {
+			l += Math.hypot(p[i + 2] - p[i], p[i + 3] - p[i + 1]);
+		}
+		return l;
+	}
+
 	private static void deleteTree(Path root) throws IOException {
 		if (!Files.exists(root)) {
 			return;
@@ -704,6 +712,58 @@ final class SelfTest {
 				check(placed >= bestRails * 7 / 10 && joined >= placed * 9 / 10,
 					"rails are laid along the track: %d of %d track columns, %d joined to a neighbour", placed, bestRails, joined);
 			}
+		}
+
+		// Västerbron, the long road bridge over Riddarfjärden: every chunk along it, decks over the water.
+		{
+			TerrainField field = RealEarth.terrain();
+			int mx = (int) Math.floor(Mercator.sampleX(18.0262) / (Mercator.TILE_SIZE * 2));
+			int my = (int) Math.floor(Mercator.sampleY(59.3228) / (Mercator.TILE_SIZE * 2));
+			double[] longest = null;
+			for (var w : field.map().tile(mx, my).join().ways()) {
+				if (w.bridge() && se.itssimple.realearth.osm.Ways.isPaved(w.kind()) && (longest == null || length(w.points()) > length(longest))) {
+					longest = w.points();
+				}
+			}
+			java.util.Set<Long> along = new java.util.LinkedHashSet<>();
+			if (longest != null) {
+				for (int i = 0; i + 1 < longest.length; i += 2) {
+					double rLat = Mercator.latitudeOfSampleY(longest[i + 1]);
+					double rLon = (longest[i] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
+					along.add(ChunkPos.pack((int) field.projection().blockX(rLat, rLon) >> 4, (int) field.projection().blockZ(rLat) >> 4));
+				}
+			}
+			int decks = 0;
+			int placed = 0;
+			int overWater = 0;
+			for (long key : along) {
+				try {
+					ChunkTerrain c = field.chunkBlocking(ChunkPos.getX(key), ChunkPos.getZ(key), 120);
+					LevelChunk chunk = earth.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key));
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							int k = ChunkTerrain.index(x, z);
+							if (c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE) {
+								decks++;
+								if (c.waterTopY[k] != Integer.MIN_VALUE) {
+									overWater++;
+								}
+								BlockState at = chunk.getBlockState(new BlockPos(x, c.deckY[k], z));
+								if (!at.isAir() && at.getFluidState().isEmpty()) {
+									placed++;
+								} else if (decks - placed == 1) {
+									log("deck column %d,%d: deck Y %d (%.1f m), water top %d, ground top %d, block there %s", x, z, c.deckY[k], c.deckMeters[k],
+										c.waterTopY[k], c.topSolidY[k], at);
+								}
+							}
+						}
+					}
+				} catch (Exception e) {
+					log("bridge chunk failed: %s", e);
+				}
+			}
+			log("Västerbron: %d chunks along it, %d deck columns (%d over water), %d with a deck block", along.size(), decks, overWater, placed);
+			check(overWater > 50 && placed >= decks * 9 / 10, "Västerbron's deck stands over the water (%d of %d columns)", placed, decks);
 		}
 
 		// Dry country: the Grand Canyon's walls are banded terracotta and its floor red earth, not grass.

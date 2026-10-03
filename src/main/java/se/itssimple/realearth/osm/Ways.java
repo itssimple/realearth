@@ -21,6 +21,11 @@ public final class Ways {
 	public static final byte RAIL_BED = 7;
 	/** The track itself: one line of rail blocks. */
 	public static final byte RAIL = 8;
+	/**
+	 * A tram or light-rail line, as read from the map; drawn exactly like a railway (as RAIL), but towns
+	 * may build right up to it.
+	 */
+	public static final byte TRAM = 9;
 
 	private Ways() {
 	}
@@ -47,7 +52,7 @@ public final class Ways {
 			case "path" -> PATH;
 			case "rail" -> RAIL;
 			// Trams and light rail run on the surface; subways and monorails don't (or not on the ground).
-			case "transit" -> "tram".equals(subclass) || "light_rail".equals(subclass) ? RAIL : NONE;
+			case "transit" -> "tram".equals(subclass) || "light_rail".equals(subclass) ? TRAM : NONE;
 			default -> NONE;
 		};
 	}
@@ -61,7 +66,7 @@ public final class Ways {
 			case SERVICE -> 3.5;
 			case TRACK -> 3.0;
 			case PATH -> 1.6;
-			case RAIL -> 3.5;
+			case RAIL, TRAM -> 3.5;
 			default -> 0.0;
 		};
 	}

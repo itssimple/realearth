@@ -59,7 +59,7 @@ final class WayRaster {
 		double[] near = new double[5];
 
 		for (OsmWater.Way way : ways) {
-			boolean rail = way.kind() == Ways.RAIL;
+			boolean rail = way.kind() == Ways.RAIL || way.kind() == Ways.TRAM;
 			if (rail ? !rails : !roads) {
 				continue;
 			}

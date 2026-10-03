@@ -60,7 +60,7 @@ public final class BuiltUpPlacement extends RandomSpreadStructurePlacement {
 	public boolean applyAdditionalChunkRestrictions(int sourceX, int sourceZ, long levelSeed) {
 		return super.applyAdditionalChunkRestrictions(sourceX, sourceZ, levelSeed) && GenContext.exact()
 			&& builtShare(sourceX * 16 + 8, sourceZ * 16 + 8, radius) >= minBuiltShare
-			&& !nearRailOrMotorway(sourceX * 16 + 8, sourceZ * 16 + 8, radius + 24);
+			&& !nearRailOrMotorway(sourceX * 16 + 8, sourceZ * 16 + 8, radius + 16);
 	}
 
 	/**

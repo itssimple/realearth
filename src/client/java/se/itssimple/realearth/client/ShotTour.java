@@ -63,6 +63,15 @@ final class ShotTour {
 		new Shot("gotland-sky", 57.8500, 18.7500, 3000, 15, 35)
 	);
 
+	/** Towns, streets, railways and bridges in Stockholm. */
+	private static final List<Shot> TOWNS = List.of(
+		new Shot("city-street", 59.3150, 18.0720, 25, 90, 25),
+		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
+		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
+		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
+		new Shot("suburb", 59.3380, 17.9400, 60, -90, 30)
+	);
+
 	/** Structures found by the self-test in the Earth world type test world (its seed), relative to the start point. */
 	private static final List<Shot> STRUCTURES = List.of(
 		Shot.atBlock("village", -760, -520, 28, -30, 38),
@@ -74,6 +83,7 @@ final class ShotTour {
 	private static final List<Shot> SHOTS = (switch (System.getProperty("realearth.shotList", "")) {
 		case "structures" -> STRUCTURES;
 		case "tour" -> TOUR;
+		case "towns" -> TOWNS;
 		default -> PLACES;
 	}).stream()
 		.filter(s -> System.getProperty("realearth.shotOnly", "").isEmpty()
