@@ -41,11 +41,21 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
 
 ## Towns, roads and railways
 
-- **Towns and cities fill with villages.** Wherever the real land is mostly built-up (ESA WorldCover), villages
-  stand about 160 blocks apart, so a city is a sprawl of villages with villagers, and the countryside keeps
-  vanilla's scattered ones. The style follows the climate: plains villages in most of Europe, taiga villages in
-  the north, snowy ones in the far north, desert and savanna villages in hot countries. Pillager outposts stay out
-  of towns, and villages keep clear of railways and motorways.
+- **Real buildings.** Every building mapped in OpenStreetMap stands on its real footprint, built like a village
+  house in the style of its climate: oak, cobblestone and brick in most of Europe, spruce in the north, snowy
+  roofs in the far north, sandstone in deserts, acacia and terracotta in the tropics.
+  - Storeys are at least 4.5 m (5 blocks) high; their number comes from the building's real height at about
+    3 m each, up to 10.
+  - Windows, corner posts, a front door towards the nearest street and more doors on long walls, ladders
+    between storeys; small buildings get hipped roofs, large ones flat roofs with a parapet.
+  - Furnished: beds, chests, crafting tables, furnaces, barrels, bookshelves, flower pots, lanterns, and villager
+    job blocks. Villagers move into some of the beds and take up the trades they find.
+  - Between them: wells, farm plots, bells on their posts, hay stores, and street lamps along the streets.
+  - Each building stands level, on the ground under its whole footprint: a foundation on the low side, dug in on
+    the high side.
+- **Villages where buildings aren't mapped.** Built-up land without mapped buildings (ESA WorldCover) gets vanilla
+  villages about 160 blocks apart instead, in the style of the climate. Pillager outposts stay out of towns, and
+  villages keep clear of railways and motorways.
 - **Roads, tracks and paths** come from OpenStreetMap: asphalt (grey concrete) for streets and highways, sized by
   class, coarse dirt and gravel for tracks, dirt paths for footways and cycleways. Roads are levelled across
   their width where the ground allows.
@@ -265,6 +275,9 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `useMapWater`, `mapTileJson` | true, OpenFreeMap | Water from OpenStreetMap |
 | `useLandCover`, `landCoverUrl` | true, ESA S3 | Land cover from ESA WorldCover |
 | `useRoads`, `useRailways` | true, true | Roads, tracks and paths; railways and trams (need `useMapWater`'s map tiles) |
+| `useBuildings` | true | Build the map's buildings (and no villages where they are) |
+| `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
+| `villagerShare` | 0.4 | Share of beds that come with a villager (at most 3 villagers per chunk) |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |
 | `lakeWindowSamples`, `lakeFlatnessMeters` | 17, 0.02 | How large and how flat a lake must be |
 | `maxLakeDepthMeters` | 12 | Deepest carved lake bed |
@@ -291,8 +304,10 @@ world; only the start point and scale differ.)
     for land and water alike, so its city channels stand at 26 m (real: under 1 m), and Mälaren reads 4 m
     (real: 0.7 m). National LiDAR (e.g. Lantmäteriet's 1 m model for Sweden) would fix this region by region.
   - Without map water (offline), land below sea level that isn't a flat lake floods.
-- **Towns are villages, not cities.** No real buildings or high-rises yet. Village houses may stand across
-  streets, since vanilla villages don't know about the real road network.
+- **Buildings are village houses, not replicas.** Shapes and heights are real, but the look is the village style of
+  the climate, and interiors are open floors furnished along the walls rather than real rooms. A building that
+  crosses a map tile boundary (every 1–2 km) is built as two halves that may differ in floor level and roof.
+- Distant Horizons shows buildings only near the player, as solid blocks up to their roofs.
 - **Chunk memory.** Chunks are 254 sections tall (vanilla has 24). Solid rock and open ocean are stored compactly,
   but each loaded chunk still costs several times a vanilla one.
 - Some shallow caves stop just under the surface, leaving a thin roof of dirt.

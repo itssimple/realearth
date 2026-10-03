@@ -18,11 +18,11 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 4. **Real day length and sun.** Sunrise and sunset from latitude and today's date: midnight sun in Kiruna in
    June, six-hour days in Stockholm in December. Optionally seasonal snow cover.
 5. **Spawn safety.** If the start point is in the sea, spawn on the nearest land.
-6. **Real buildings** from OpenStreetMap's `building` layer (with heights for many), instead of or alongside
-   the villages that fill towns now. Roads and railways are done.
-7. **Villages that follow the streets.** City villages are vanilla jigsaw villages placed on a grid over
-   built-up land; their houses can stand across real streets. Placing houses along the real road network
-   would fit much better.
+6. **Richer buildings.** Done: real footprints as furnished village houses. Next: interior walls into rooms, shops
+   and job blocks from OpenStreetMap's points of interest (bakery, library, church...), landmarks, and buildings
+   in Distant Horizons' far terrain.
+7. **Villages that follow the streets**, where buildings aren't mapped: city villages are vanilla jigsaw villages
+   on a grid; placing their houses along the real road network would fit better.
 
 ## Known issues
 
