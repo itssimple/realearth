@@ -8,5 +8,9 @@ public class RealEarthClient implements ClientModInitializer {
 		if (Boolean.getBoolean("realearth.shots")) {
 			ShotTour.install();
 		}
+		String playtest = System.getProperty("realearth.playtest", "");
+		if (!playtest.isEmpty()) {
+			PlayTest.install(playtest);
+		}
 	}
 }

@@ -25,6 +25,13 @@ loom {
 			vmArg "-Drealearth.selftest=true"
 			runDir "run-selftest-earthtype"
 		}
+		playtest {
+			client()
+			name "Play Test"
+			vmArg "-Drealearth.playtest=${project.findProperty('place') ?: '59.3293,18.0686'}"
+			programArgs "--quickPlaySingleplayer", "playtest"
+			runDir "run-shots"
+		}
 		shots {
 			client()
 			name "Screenshot Tour"

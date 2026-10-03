@@ -141,6 +141,13 @@ public final class PortalTravel {
 			}
 			bottomLeft = p;
 		} else {
+			TerrainField field = RealEarth.terrain();
+			if (field != null && RealEarth.isEarth(level)) {
+				// A new portal stands on open ground, not on a roof or in a house.
+				int[] open = field.openGround(x, z, 16);
+				x = open[0];
+				z = open[1];
+			}
 			int y = RealEarth.surfaceY(level, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 			y = Math.max(level.getMinY() + 8, Math.min(level.getMaxY() - 8, y));
 			axis = Direction.Axis.X;

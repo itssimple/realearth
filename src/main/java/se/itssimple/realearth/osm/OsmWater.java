@@ -206,19 +206,22 @@ public final class OsmWater {
 				if (f.flag("hide_3d") || (!Double.isNaN(base) && base > 0.5)) {
 					continue;
 				}
-				double minX = Double.MAX_VALUE;
-				double minY = Double.MAX_VALUE;
-				double maxX = -Double.MAX_VALUE;
-				double maxY = -Double.MAX_VALUE;
+				// At this zoom the map merges all of a tile's buildings of the same height into one
+				// feature: split it back into buildings, each an outer ring with the holes after it
+				// (outer rings wind one way, holes the other).
+				List<double[]> current = null;
 				for (double[] ring : parts) {
-					for (int i = 0; i < ring.length; i += 2) {
-						minX = Math.min(minX, ring[i]);
-						maxX = Math.max(maxX, ring[i]);
-						minY = Math.min(minY, ring[i + 1]);
-						maxY = Math.max(maxY, ring[i + 1]);
+					if (current == null || signedArea(ring) > 0) {
+						if (current != null) {
+							addBuilding(buildings, current, f.number("render_height"));
+						}
+						current = new ArrayList<>();
 					}
+					current.add(ring);
 				}
-				buildings.add(new Building(parts, f.number("render_height"), buildings.size(), minX, minY, maxX, maxY));
+				if (current != null) {
+					addBuilding(buildings, current, f.number("render_height"));
+				}
 				continue;
 			}
 			if (f.layer().equals("water") && f.type() == VectorTile.POLYGON) {
@@ -264,6 +267,32 @@ public final class OsmWater {
 			}
 		}
 		return new Shapes(areas, lines, true, ways, buildings);
+	}
+
+	private static void addBuilding(List<Building> buildings, List<double[]> rings, double height) {
+		double minX = Double.MAX_VALUE;
+		double minY = Double.MAX_VALUE;
+		double maxX = -Double.MAX_VALUE;
+		double maxY = -Double.MAX_VALUE;
+		for (double[] ring : rings) {
+			for (int i = 0; i < ring.length; i += 2) {
+				minX = Math.min(minX, ring[i]);
+				maxX = Math.max(maxX, ring[i]);
+				minY = Math.min(minY, ring[i + 1]);
+				maxY = Math.max(maxY, ring[i + 1]);
+			}
+		}
+		buildings.add(new Building(rings, height, buildings.size(), minX, minY, maxX, maxY));
+	}
+
+	/** Surveyor's formula, in tile orientation (y down): positive for an outer ring, as vector tiles define it. */
+	private static double signedArea(double[] ring) {
+		double a = 0;
+		int n = ring.length / 2;
+		for (int i = 0, j = n - 1; i < n; j = i++) {
+			a += ring[j * 2] * ring[i * 2 + 1] - ring[i * 2] * ring[j * 2 + 1];
+		}
+		return a / 2;
 	}
 
 	/** The zoom-14 tiles covering a range of global z15 sample coordinates. */

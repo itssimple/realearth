@@ -289,9 +289,12 @@ public final class EarthCommand {
 					player.sendSystemMessage(Component.literal("Could not load elevation data: " + error.getMessage()).withStyle(ChatFormatting.RED));
 					return;
 				}
-				int y = RealEarth.surfaceY(earth, Heightmap.Types.MOTION_BLOCKING, x, z);
-				player.teleportTo(earth, x + 0.5, y, z + 0.5, Set.of(), player.getYRot(), player.getXRot(), true);
-				double elevation = field.toElevation(y, lat);
+				// On the street beside a building, not on its roof.
+				int[] open = field.openGround(x, z, 24);
+				int y = RealEarth.surfaceY(earth, Heightmap.Types.MOTION_BLOCKING, open[0], open[1]);
+				player.teleportTo(earth, open[0] + 0.5, y, open[1] + 0.5, Set.of(), player.getYRot(), player.getXRot(), true);
+				double ground = field.groundMetersAt(open[0], open[1]);
+				double elevation = Double.isNaN(ground) ? field.toElevation(y, lat) : ground;
 				player.sendSystemMessage(Component.literal(String.format(Locale.ROOT, "Welcome to %.4f, %.4f, %.0f m above sea level. ", lat, lon, elevation))
 					.append(mapLink(lat, lon)));
 			}));

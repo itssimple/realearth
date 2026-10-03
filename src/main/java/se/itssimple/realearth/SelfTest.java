@@ -887,6 +887,46 @@ final class SelfTest {
 			log("villagers in 5 x 5 chunks of buildings: %d", villagers.size());
 		}
 
+		// Fagersjö: the map merges a tile's buildings of one height into one feature; each must still be
+		// planned on its own, standing on its own ground.
+		{
+			TerrainField field = RealEarth.terrain();
+			int mx = (int) Math.floor(Mercator.sampleX(18.0623) / (Mercator.TILE_SIZE * 2));
+			int my = (int) Math.floor(Mercator.sampleY(59.2465) / (Mercator.TILE_SIZE * 2));
+			int count = field.map().tile(mx, my).join().buildings().size();
+			check(count > 200, "merged map buildings are split into single buildings: %d in Fagersjö's tile", count);
+			int fx = (int) field.projection().blockX(59.2465, 18.0623) >> 4;
+			int fz = (int) field.projection().blockZ(59.2465) >> 4;
+			int columns = 0;
+			int high = 0;
+			int worst = 0;
+			for (int cx = fx - 8; cx <= fx + 8; cx++) {
+				for (int cz = fz - 8; cz <= fz + 8; cz++) {
+					ChunkTerrain c;
+					try {
+						c = field.chunkBlocking(cx, cz, 120);
+					} catch (Exception e) {
+						continue;
+					}
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							int k = ChunkTerrain.index(x, z);
+							if (c.building[k] != 0) {
+								int lift = c.plans.get(c.building[k] - 1).floorY - c.topSolidY[k];
+								columns++;
+								worst = Math.max(worst, Math.abs(lift));
+								if (Math.abs(lift) > 6) {
+									high++;
+								}
+							}
+						}
+					}
+				}
+			}
+			log("Fagersjö: %d building columns, %d more than 6 blocks off their ground, worst %d", columns, high, worst);
+			check(columns > 1000 && high < columns / 10, "buildings stand on their own ground: %d of %d columns more than 6 blocks off", high, columns);
+		}
+
 		// Paris: no building stands taller than its storeys allow, in chunks or in distant terrain.
 		{
 			TerrainField field = RealEarth.terrain();

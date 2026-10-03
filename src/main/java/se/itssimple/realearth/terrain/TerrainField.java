@@ -210,6 +210,40 @@ public final class TerrainField implements AutoCloseable {
 		return map;
 	}
 
+	/**
+	 * The nearest column to (x, z), within {@code radius}, that is open dry ground: no building, no
+	 * water. For putting arrivals on the street rather than on a roof. Uses only terrain already known;
+	 * returns (x, z) itself when nothing better is known.
+	 */
+	public int[] openGround(int x, int z, int radius) {
+		for (int r = 0; r <= radius; r++) {
+			for (int dz = -r; dz <= r; dz++) {
+				for (int dx = -r; dx <= r; dx++) {
+					if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+						continue;
+					}
+					int wx = x + dx;
+					int wz = z + dz;
+					ChunkTerrain t = chunkIfReady(wx >> 4, wz >> 4);
+					if (t == null) {
+						continue;
+					}
+					int k = ChunkTerrain.index(wx & 15, wz & 15);
+					if (t.building[k] == 0 && t.waterTopY[k] == Integer.MIN_VALUE && t.deckY[k] == Integer.MIN_VALUE) {
+						return new int[] {wx, wz};
+					}
+				}
+			}
+		}
+		return new int[] {x, z};
+	}
+
+	/** Real ground elevation in metres at a block column, if its terrain is known; NaN otherwise. */
+	public double groundMetersAt(int x, int z) {
+		ChunkTerrain t = chunkIfReady(x >> 4, z >> 4);
+		return t == null ? Double.NaN : t.groundMeters[ChunkTerrain.index(x & 15, z & 15)];
+	}
+
 	/** The chunk's terrain if it is already known, without starting any work. */
 	public ChunkTerrain chunkIfReady(int chunkX, int chunkZ) {
 		CompletableFuture<ChunkTerrain> f;
