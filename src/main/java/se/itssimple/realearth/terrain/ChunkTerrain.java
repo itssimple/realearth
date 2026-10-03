@@ -38,6 +38,20 @@ public final class ChunkTerrain {
 	 * land cover. Such a chunk is generated anyway, and recorded so it can be repaired later.
 	 */
 	public boolean degraded;
+
+	/** Road, track, path or railway on the ground of each column (see Ways), NONE for none. */
+	public final byte[] way = new byte[SPAN * SPAN];
+	/** Way carried on a bridge deck above the column, NONE for none. */
+	public final byte[] deckWay = new byte[SPAN * SPAN];
+	/** Bridge deck surface in metres, NaN where there is none. */
+	public final float[] deckMeters = new float[SPAN * SPAN];
+	/** Y of the bridge deck block, or Integer.MIN_VALUE. */
+	public final int[] deckY = new int[SPAN * SPAN];
+
+	{
+		java.util.Arrays.fill(deckMeters, Float.NaN);
+		java.util.Arrays.fill(deckY, Integer.MIN_VALUE);
+	}
 	public final long createdAt = System.currentTimeMillis();
 
 	/** Per-chunk biome answers, filled in lazily by the biome source. */

@@ -1,5 +1,9 @@
 package se.itssimple.realearth.world;
 
+import net.minecraft.world.level.block.RailBlock;
+import net.minecraft.world.level.block.state.properties.RailShape;
+import se.itssimple.realearth.osm.Ways;
+import java.util.Arrays;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import java.util.List;
@@ -113,8 +117,28 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		GenContext.EXACT.set(Boolean.TRUE);
 		try {
 			super.createStructures(registryAccess, state, structureManager, chunk, templates, level);
+			removeOutpostsFromTowns(registryAccess, chunk);
 		} finally {
 			GenContext.EXACT.remove();
+		}
+	}
+
+	/** Pillager outposts belong in the wild, not in the middle of a town full of villagers. */
+	private static void removeOutpostsFromTowns(RegistryAccess registryAccess, ChunkAccess chunk) {
+		var starts = chunk.getAllStarts();
+		if (starts.isEmpty()) {
+			return;
+		}
+		var structures = registryAccess.lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
+		var outpost = structures.getValue(net.minecraft.world.level.levelgen.structure.BuiltinStructures.PILLAGER_OUTPOST);
+		if (outpost == null || !starts.containsKey(outpost)) {
+			return;
+		}
+		ChunkPos pos = chunk.getPos();
+		if (BuiltUpPlacement.builtShare(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 96) > 0.15) {
+			var kept = new java.util.HashMap<>(starts);
+			kept.remove(outpost);
+			chunk.setAllStarts(kept);
 		}
 	}
 
@@ -287,7 +311,7 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		for (int z = 0; z < 16; z++) {
 			for (int x = 0; x < 16; x++) {
 				Column c = columns[z * 16 + x];
-				if (c.topper == null || c.waterTop > c.top) {
+				if (c.topper == null || c.waterTop > c.top || c.topper.is(Blocks.RAIL)) {
 					continue;
 				}
 				BlockPos above = new BlockPos(x, c.top + 1, z);
@@ -313,6 +337,46 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			}
 		}
 
+		// Rails, last: on the ground as it ended up, even where a structure reshaped it.
+		for (int z = 0; z < 16; z++) {
+			for (int x = 0; x < 16; x++) {
+				Column c = columns[z * 16 + x];
+				if (c.topper == null || !c.topper.is(Blocks.RAIL) || c.waterTop > c.top) {
+					continue;
+				}
+				for (int y = c.top + 1; y <= c.top + 4; y++) {
+					BlockPos at = new BlockPos(x, y, z);
+					if (chunk.getBlockState(at).isAir() && chunk.getBlockState(at.below()).isSolid()) {
+						chunk.setBlockState(at, c.topper, 0);
+						break;
+					}
+				}
+			}
+		}
+
+		// Bridge decks, with rails on top where a railway crosses.
+		int[] deckTop = new int[256];
+		Arrays.fill(deckTop, Integer.MIN_VALUE);
+		for (int z = 0; z < 16; z++) {
+			for (int x = 0; x < 16; x++) {
+				int k = ChunkTerrain.index(x, z);
+				int y = t.deckY[k];
+				if (y == Integer.MIN_VALUE || t.deckWay[k] == Ways.NONE || y >= VerticalScale.MAX_Y - 2) {
+					continue;
+				}
+				boolean rail = Ways.isRail(t.deckWay[k]);
+				chunk.setBlockState(new BlockPos(x, y, z), rail ? block(Blocks.STONE_BRICKS) : waySurface(t.deckWay[k], baseX + x, baseZ + z), 0);
+				for (int up = 1; up <= 3; up++) {
+					chunk.setBlockState(new BlockPos(x, y + up, z), AIR, 0);
+				}
+				deckTop[z * 16 + x] = y;
+				if (t.deckWay[k] == Ways.RAIL) {
+					chunk.setBlockState(new BlockPos(x, y + 1, z), railShape(t, x, z, true), 0);
+					deckTop[z * 16 + x] = y + 1;
+				}
+			}
+		}
+
 		Heightmap oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
 		Heightmap worldSurface = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
 		BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
@@ -320,6 +384,7 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			for (int x = 0; x < 16; x++) {
 				Column c = columns[z * 16 + x];
 				int from = beardBox != null ? Math.max(maxSurface, Math.max(c.top, c.waterTop)) : Math.max(c.top, c.waterTop);
+				from = Math.max(from, deckTop[z * 16 + x]);
 				for (int y = from; y >= c.top - 64 && y > minY; y--) {
 					BlockState state = chunk.getBlockState(probe.set(x, y, z));
 					if (!state.isAir()) {
@@ -362,6 +427,55 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		return b.defaultBlockState();
 	}
 
+	/** What a way is paved with: asphalt for roads, dirt and gravel for tracks, trodden paths, ballast. */
+	private static BlockState waySurface(byte way, int worldX, int worldZ) {
+		return switch (way) {
+			case Ways.MOTORWAY, Ways.MAJOR, Ways.MINOR, Ways.SERVICE -> block(Blocks.GRAY_CONCRETE);
+			case Ways.TRACK -> GeoNoise.hash(worldX, 3, worldZ) < 0.55 ? block(Blocks.COARSE_DIRT) : block(Blocks.GRAVEL);
+			case Ways.PATH -> block(Blocks.DIRT_PATH);
+			default -> block(Blocks.GRAVEL);
+		};
+	}
+
+	/**
+	 * The rail at a track column, turned to join its neighbours on the track: straight, curved, or
+	 * sloping up where the next rail is a block higher.
+	 */
+	private static BlockState railShape(ChunkTerrain t, int x, int z, boolean onDeck) {
+		boolean north = isTrack(t, x, z - 1, onDeck);
+		boolean south = isTrack(t, x, z + 1, onDeck);
+		boolean east = isTrack(t, x + 1, z, onDeck);
+		boolean west = isTrack(t, x - 1, z, onDeck);
+		int here = trackY(t, x, z, onDeck);
+		RailShape shape;
+		if (north && east) {
+			shape = RailShape.NORTH_EAST;
+		} else if (north && west) {
+			shape = RailShape.NORTH_WEST;
+		} else if (south && east) {
+			shape = RailShape.SOUTH_EAST;
+		} else if (south && west) {
+			shape = RailShape.SOUTH_WEST;
+		} else if (east || west) {
+			shape = east && trackY(t, x + 1, z, onDeck) == here + 1 ? RailShape.ASCENDING_EAST
+				: west && trackY(t, x - 1, z, onDeck) == here + 1 ? RailShape.ASCENDING_WEST : RailShape.EAST_WEST;
+		} else {
+			shape = north && trackY(t, x, z - 1, onDeck) == here + 1 ? RailShape.ASCENDING_NORTH
+				: south && trackY(t, x, z + 1, onDeck) == here + 1 ? RailShape.ASCENDING_SOUTH : RailShape.NORTH_SOUTH;
+		}
+		return Blocks.RAIL.defaultBlockState().setValue(RailBlock.SHAPE, shape);
+	}
+
+	private static boolean isTrack(ChunkTerrain t, int x, int z, boolean onDeck) {
+		int k = ChunkTerrain.index(x, z);
+		return (onDeck ? t.deckWay[k] : t.way[k]) == Ways.RAIL;
+	}
+
+	private static int trackY(ChunkTerrain t, int x, int z, boolean onDeck) {
+		int k = ChunkTerrain.index(x, z);
+		return onDeck ? t.deckY[k] : t.topSolidY[k];
+	}
+
 	private Column column(ChunkTerrain t, int x, int z, int worldX, int worldZ) {
 		int k = ChunkTerrain.index(x, z);
 		int top = t.topSolidY[k];
@@ -393,6 +507,13 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 
 		// Caves must not open into the sea or a lake from the side: a dry column next to water is sealed.
 		boolean shore = t.nextToWater(x, z);
+
+		byte way = t.way[k];
+		if (way != Ways.NONE) {
+			BlockState surface = waySurface(way, worldX, worldZ);
+			BlockState under = Ways.isPaved(way) ? STONE : Ways.isRail(way) ? block(Blocks.GRAVEL) : dirt;
+			return new Column(top, waterTop, surface, under, 2, STONE, shore, way == Ways.RAIL ? railShape(t, x, z, false) : null);
+		}
 		ResourceKey<Biome> biome = BiomePicker.pick(lat, lon, ground, false, false, 0, climate, cover);
 		int slope = t.slope(x, z);
 		boolean cold = Koppen.polar(climate) || Koppen.subarctic(climate) || (climate == Koppen.SEA && Math.abs(lat) > 60);
@@ -432,9 +553,9 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 				return field(top, waterTop, worldX, worldZ, shore, climate);
 			}
 			case WorldCover.BUILT -> {
-				// Until buildings come: paved ground with yards, and nothing for a forest to grow on.
-				double h = GeoNoise.hash(worldX >> 2, 7, worldZ >> 2);
-				BlockState ground0 = h < 0.4 ? grass : h < 0.75 ? block(Blocks.POLISHED_ANDESITE) : h < 0.9 ? block(Blocks.GRAVEL) : block(Blocks.STONE_BRICKS);
+				// Between the town's villages: lawns and yards, with lots of paving, gravel and bare earth.
+				double h = GeoNoise.hash(worldX >> 3, 7, worldZ >> 3);
+				BlockState ground0 = h < 0.6 ? grass : h < 0.78 ? block(Blocks.POLISHED_ANDESITE) : h < 0.9 ? block(Blocks.GRAVEL) : block(Blocks.COARSE_DIRT);
 				return new Column(top, waterTop, ground0, dirt, 3, STONE, shore, null);
 			}
 			case WorldCover.WETLAND, WorldCover.MANGROVES -> {

@@ -48,6 +48,11 @@ public sealed interface Projection permits Projection.Sinusoidal, Projection.Web
 	/** Short name for messages and the world settings file. */
 	String id();
 
+	/** Width of the world in blocks when the map repeats east-west, or 0 when it doesn't. */
+	default double periodX() {
+		return 0;
+	}
+
 	default double longitudeAt(double x, double latitude) {
 		return wrapLongitude(originLongitude() + longitudeOffsetAt(x, latitude));
 	}
@@ -179,6 +184,11 @@ public sealed interface Projection permits Projection.Sinusoidal, Projection.Web
 		@Override
 		public double shear(double latitude, double longitude) {
 			return 0.0;
+		}
+
+		@Override
+		public double periodX() {
+			return 2.0 * Math.PI * s() * EARTH_RADIUS_METERS;
 		}
 
 		@Override

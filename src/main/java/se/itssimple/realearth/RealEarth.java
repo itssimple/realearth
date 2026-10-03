@@ -122,6 +122,7 @@ public class RealEarth implements ModInitializer {
 
 		Registry.register(BuiltInRegistries.CHUNK_GENERATOR, id("earth"), EarthChunkGenerator.CODEC);
 		Registry.register(BuiltInRegistries.BIOME_SOURCE, id("earth"), EarthBiomeSource.CODEC);
+		Registry.register(BuiltInRegistries.STRUCTURE_PLACEMENT, id("built_up"), se.itssimple.realearth.world.BuiltUpPlacement.TYPE);
 
 		ServerLifecycleEvents.SERVER_STARTING.register(RealEarth::start);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> stop());

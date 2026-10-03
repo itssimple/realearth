@@ -18,8 +18,11 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 4. **Real day length and sun.** Sunrise and sunset from latitude and today's date: midnight sun in Kiruna in
    June, six-hour days in Stockholm in December. Optionally seasonal snow cover.
 5. **Spawn safety.** If the start point is in the sea, spawn on the nearest land.
-6. **Roads, railways and buildings** from OpenStreetMap (OpenFreeMap vector tiles already carry
-   `transportation` and `building` layers, with heights for many buildings).
+6. **Real buildings** from OpenStreetMap's `building` layer (with heights for many), instead of or alongside
+   the villages that fill towns now. Roads and railways are done.
+7. **Villages that follow the streets.** City villages are vanilla jigsaw villages placed on a grid over
+   built-up land; their houses can stand across real streets. Placing houses along the real road network
+   would fit much better.
 
 ## Known issues
 

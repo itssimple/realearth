@@ -83,13 +83,33 @@ public final class BiomePicker {
 			case WorldCover.SHRUBS -> shrubs(climate);
 			case WorldCover.GRASS, WorldCover.MOSS -> grass(climate, e, treeline);
 			case WorldCover.CROPS -> Koppen.temperate(climate) && patch > 0.6 ? Biomes.SUNFLOWER_PLAINS : Biomes.PLAINS;
-			case WorldCover.BUILT -> Biomes.PLAINS;
+			case WorldCover.BUILT -> builtUp(climate);
 			case WorldCover.BARE -> bare(climate, e, treeline, variety);
 			case WorldCover.WATER -> Koppen.polar(climate) ? Biomes.FROZEN_RIVER : Biomes.RIVER;
 			case WorldCover.WETLAND -> Biomes.SWAMP;
 			case WorldCover.MANGROVES -> Biomes.MANGROVE_SWAMP;
 			default -> climateOnly(climate, latitude, e, treeline, variety, patch);
 		};
+	}
+
+	/**
+	 * Towns take the biome whose village style suits the climate: adobe in deserts, acacia in the
+	 * tropics and dry savanna, spruce in the north, snowy in the far north, plains villages elsewhere.
+	 */
+	private static ResourceKey<Biome> builtUp(int c) {
+		if (Koppen.desert(c)) {
+			return Biomes.DESERT;
+		}
+		if (Koppen.tropical(c) || (Koppen.arid(c) && Koppen.hotArid(c))) {
+			return Biomes.SAVANNA;
+		}
+		if (Koppen.polar(c) || Koppen.veryCold(c)) {
+			return Biomes.SNOWY_PLAINS;
+		}
+		if (Koppen.subarctic(c)) {
+			return Biomes.TAIGA;
+		}
+		return Biomes.PLAINS;
 	}
 
 	private static ResourceKey<Biome> forest(int c, double latitude, double variety, double patch) {

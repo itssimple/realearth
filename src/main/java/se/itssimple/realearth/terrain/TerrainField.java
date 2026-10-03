@@ -357,7 +357,16 @@ public final class TerrainField implements AutoCloseable {
 					}
 				}
 			} else {
-				addTiles(needed, minX, maxX, minY, maxY);
+				// A few samples more than the spline needs: roads level to their centreline, which
+				// may lie just outside the chunk.
+				addTiles(needed, minX - 4, maxX + 4, minY - 4, maxY + 4);
+			}
+		}
+
+		List<CompletableFuture<OsmWater.Shapes>> wayTiles = new ArrayList<>();
+		if (map != null && (config.useRoads || config.useRailways) && minX <= maxX && maxX - minX <= 4L * Mercator.TILE_SIZE) {
+			for (int[] w : OsmWater.tilesCovering(minX - 4, minY - 4, maxX + 4, maxY + 4)) {
+				wayTiles.add(map.tile(w[0], w[1]));
 			}
 		}
 
@@ -375,12 +384,15 @@ public final class TerrainField implements AutoCloseable {
 				}
 			});
 
-		CompletableFuture<?>[] all = new CompletableFuture[needed.size() + 1];
+		CompletableFuture<?>[] all = new CompletableFuture[needed.size() + 1 + wayTiles.size()];
 		int a = 0;
 		for (CompletableFuture<ProcessedTile> f : needed.values()) {
 			all[a++] = f;
 		}
-		all[a] = coverLookup;
+		all[a++] = coverLookup;
+		for (CompletableFuture<OsmWater.Shapes> f : wayTiles) {
+			all[a++] = f;
+		}
 		return CompletableFuture.allOf(all).thenApplyAsync(v -> {
 			Map<Long, ProcessedTile> tiles = new HashMap<>();
 			needed.forEach((key, f) -> tiles.put(key, f.join()));
@@ -397,6 +409,17 @@ public final class TerrainField implements AutoCloseable {
 					terrain.groundMeters[k] = -3000f;
 					terrain.waterMeters[k] = 0f;
 				}
+			}
+			if (!wayTiles.isEmpty()) {
+				List<OsmWater.Way> ways = new ArrayList<>();
+				for (CompletableFuture<OsmWater.Shapes> f : wayTiles) {
+					OsmWater.Shapes s = f.join();
+					terrain.degraded |= s.failed();
+					ways.addAll(s.ways());
+				}
+				WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, chunkX, chunkZ, config.useRoads, config.useRailways);
+			}
+			for (int k = 0; k < n * n; k++) {
 				finishColumn(terrain, k);
 			}
 			return terrain;
@@ -439,6 +462,31 @@ public final class TerrainField implements AutoCloseable {
 		w[1] = (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0;
 		w[2] = (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0;
 		w[3] = t3 / 6.0;
+	}
+
+	/** Smoothed ground height at a sample position, by the same B-spline as columns; NaN off the tiles at hand. */
+	static double splineHeight(Map<Long, ProcessedTile> tiles, double sx, double sy) {
+		long x0 = (long) Math.floor(sx);
+		long y0 = (long) Math.floor(sy);
+		double[] wx = new double[4];
+		double[] wy = new double[4];
+		bspline(sx - x0, wx);
+		bspline(sy - y0, wy);
+		double height = 0;
+		for (int b = 0; b < 4; b++) {
+			double row = 0;
+			for (int a = 0; a < 4; a++) {
+				long gx = x0 - 1 + a;
+				long gy = y0 - 1 + b;
+				ProcessedTile tile = tileFor(tiles, gx, gy);
+				if (tile == null) {
+					return Double.NaN;
+				}
+				row += wx[a] * tile.height[indexIn(gx, gy)];
+			}
+			height += wy[b] * row;
+		}
+		return height;
 	}
 
 	private void sampleColumn(Map<Long, ProcessedTile> tiles, double sx, double sy, ChunkTerrain out, int k) {
@@ -534,6 +582,12 @@ public final class TerrainField implements AutoCloseable {
 	/** Metres to blocks. The top solid block's upper face sits at the nearest whole Y to the ground. */
 	private void finishColumn(ChunkTerrain t, int k) {
 		int top = (int) Math.round(toY(t.groundMeters[k], t.latitude[k])) - 1;
+		if (!Float.isNaN(t.deckMeters[k])) {
+			int deck = (int) Math.round(toY(t.deckMeters[k], t.latitude[k])) - 1;
+			int below = Math.max(top, t.waterMeters[k] != t.waterMeters[k] ? top : (int) Math.round(toY(t.waterMeters[k], t.latitude[k])) - 1);
+			// A deck clears what is under it by at least two blocks, or it is no bridge.
+			t.deckY[k] = deck > below + 2 ? deck : below + 3;
+		}
 		t.topSolidY[k] = top;
 		if (!Float.isNaN(t.waterMeters[k])) {
 			int water = (int) Math.round(toY(t.waterMeters[k], t.latitude[k])) - 1;

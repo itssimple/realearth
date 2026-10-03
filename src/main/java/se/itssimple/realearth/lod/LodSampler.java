@@ -137,6 +137,14 @@ public final class LodSampler {
 			boolean wet = !Float.isNaN(t.waterMeters[idx]) && t.waterTopY[idx] != Integer.MIN_VALUE;
 			out[k] = column(t.latitude[idx], t.longitude[idx], t.groundMeters[idx], wet ? t.waterMeters[idx] : Double.NaN, t.lake[idx],
 				t.slope(lx, lz), t.cover[idx] & 0xFF, t.climate[idx] & 0xFF);
+			byte way = t.way[idx];
+			if (way != se.itssimple.realearth.osm.Ways.NONE) {
+				// Near the player, roads and railways show in the distant terrain too.
+				String paved = se.itssimple.realearth.osm.Ways.isPaved(way) ? "minecraft:gray_concrete"
+					: way == se.itssimple.realearth.osm.Ways.PATH ? "minecraft:dirt_path" : "minecraft:gravel";
+				LodSampler.Column c = out[k];
+				out[k] = new Column(c.groundTop(), c.waterTop(), paved, "minecraft:stone", c.groundTop(), null, c.biome());
+			}
 		}
 		return out;
 	}

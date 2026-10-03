@@ -74,6 +74,11 @@ public final class EarthConfig {
 
 	/** Take forests, fields, grassland, wetlands, bare ground and glaciers from ESA WorldCover (10 m). */
 	public boolean useLandCover = true;
+
+	/** Draw roads, tracks and paths from OpenStreetMap (needs useMapWater's map tiles). */
+	public boolean useRoads = true;
+	/** Draw railways and tram lines from OpenStreetMap, with real rails. */
+	public boolean useRailways = true;
 	public String landCoverUrl = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif";
 
 	/** Lakes are perfectly flat in the source data; this finds them and fills them with water. Used where map water is not. */

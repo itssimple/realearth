@@ -575,6 +575,134 @@ final class SelfTest {
 				}
 				log("structure starts in 64 x 64 chunks at %d,%d (%d ms): %s", region[0], region[1], (System.nanoTime() - ts) / 1_000_000, counts);
 				check(!counts.isEmpty(), "structures generate");
+				int villages = counts.entrySet().stream().filter(e -> e.getKey().startsWith("village")).mapToInt(java.util.Map.Entry::getValue).sum();
+				if (region[0] == startCx) {
+					// 64 x 64 chunks of central Stockholm is about 1 km square of city.
+					check(villages >= 15, "the city is covered with villages: %d in 1 km square", villages);
+					check(!counts.containsKey("pillager_outpost"), "no pillager outposts in the city");
+				} else {
+					check(villages == 0, "no villages out at sea");
+				}
+			}
+		}
+
+		// Roads and railways: central Stockholm, about 600 m square around the start.
+		{
+			TerrainField field = RealEarth.terrain();
+			int paved = 0;
+			int paths = 0;
+			int track = 0;
+			int decks = 0;
+			int bestRails = 0;
+			int bestCx = 0;
+			int bestCz = 0;
+			for (int cx = startCx - 20; cx <= startCx + 20; cx++) {
+				for (int cz = startCz - 20; cz <= startCz + 20; cz++) {
+					ChunkTerrain c;
+					try {
+						c = field.chunkBlocking(cx, cz, 120);
+					} catch (Exception e) {
+						continue;
+					}
+					int rails = 0;
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							int k = ChunkTerrain.index(x, z);
+							byte w = c.way[k];
+							if (se.itssimple.realearth.osm.Ways.isPaved(w)) {
+								paved++;
+							} else if (w == se.itssimple.realearth.osm.Ways.PATH) {
+								paths++;
+							} else if (w == se.itssimple.realearth.osm.Ways.RAIL) {
+								rails++;
+							}
+							if (c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE) {
+								decks++;
+							}
+						}
+					}
+					track += rails;
+					if (rails > bestRails) {
+						bestRails = rails;
+						bestCx = cx;
+						bestCz = cz;
+					}
+				}
+			}
+			log("ways in 41 x 41 chunks of central Stockholm: %d paved, %d path, %d rail, %d bridge deck columns", paved, paths, track, decks);
+			check(paved > 20_000 && paths > 2_000, "streets and paths are drawn in the city");
+			check(decks > 100, "bridges carry ways over the water");
+			// A surface railway from the map itself: the longest non-bridge line in the tile north of the city.
+			{
+				int mx = (int) Math.floor(Mercator.sampleX(18.0278) / (Mercator.TILE_SIZE * 2));
+				int my = (int) Math.floor(Mercator.sampleY(59.3497) / (Mercator.TILE_SIZE * 2));
+				double[] longest = null;
+				for (var w : field.map().tile(mx, my).join().ways()) {
+					if (w.kind() == se.itssimple.realearth.osm.Ways.RAIL && !w.bridge() && (longest == null || w.points().length > longest.length)) {
+						longest = w.points();
+					}
+				}
+				if (longest != null) {
+					int mid = (longest.length / 4) * 2;
+					double rLat = Mercator.latitudeOfSampleY(longest[mid + 1]);
+					double rLon = (longest[mid] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
+					int tCx = (int) field.projection().blockX(rLat, rLon) >> 4;
+					int tCz = (int) field.projection().blockZ(rLat) >> 4;
+					for (int cx = tCx - 3; cx <= tCx + 3; cx++) {
+						for (int cz = tCz - 3; cz <= tCz + 3; cz++) {
+							ChunkTerrain c;
+							try {
+								c = field.chunkBlocking(cx, cz, 120);
+							} catch (Exception e) {
+								continue;
+							}
+							int rails = 0;
+							for (int x = 0; x < 16; x++) {
+								for (int z = 0; z < 16; z++) {
+									if (c.way[ChunkTerrain.index(x, z)] == se.itssimple.realearth.osm.Ways.RAIL) {
+										rails++;
+									}
+								}
+							}
+							track += rails;
+							if (rails > bestRails) {
+								bestRails = rails;
+								bestCx = cx;
+								bestCz = cz;
+							}
+						}
+					}
+					log("railway at %.5f, %.5f: %d track columns nearby; most in chunk %d,%d (%d)", rLat, rLon, track, bestCx, bestCz, bestRails);
+				}
+			}
+			check(track > 40, "railways are drawn");
+			if (bestRails > 0) {
+				LevelChunk c = earth.getChunk(bestCx, bestCz);
+				ChunkTerrain terrain = RealEarth.terrain().chunkIfReady(bestCx, bestCz);
+				int placed = 0;
+				int joined = 0;
+				for (int x = 0; x < 16; x++) {
+					for (int z = 0; z < 16; z++) {
+						if (terrain != null && terrain.way[ChunkTerrain.index(x, z)] == se.itssimple.realearth.osm.Ways.RAIL) {
+							BlockState rail = c.getBlockState(new BlockPos(x, terrain.topSolidY[ChunkTerrain.index(x, z)] + 1, z));
+							if (placed == 0 && !rail.is(Blocks.RAIL)) {
+								int ty = terrain.topSolidY[ChunkTerrain.index(x, z)];
+								log("track column %d,%d top Y %d: %s / %s / %s; heightmap %d", x, z, ty, c.getBlockState(new BlockPos(x, ty - 1, z)),
+									c.getBlockState(new BlockPos(x, ty, z)), rail, c.getHeight(Heightmap.Types.WORLD_SURFACE, x, z));
+							}
+							if (rail.is(Blocks.RAIL)) {
+								placed++;
+								var shape = rail.getValue(net.minecraft.world.level.block.RailBlock.SHAPE);
+								if (shape != net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH || terrain.way[ChunkTerrain.index(x, z - 1)] == se.itssimple.realearth.osm.Ways.RAIL
+									|| terrain.way[ChunkTerrain.index(x, z + 1)] == se.itssimple.realearth.osm.Ways.RAIL) {
+									joined++;
+								}
+							}
+						}
+					}
+				}
+				check(placed >= bestRails * 7 / 10 && joined >= placed * 9 / 10,
+					"rails are laid along the track: %d of %d track columns, %d joined to a neighbour", placed, bestRails, joined);
 			}
 		}
 

@@ -31,7 +31,7 @@ import se.itssimple.realearth.geo.Mercator;
  */
 public final class OsmWater {
 	public static final int ZOOM = 14;
-	private static final Set<String> LAYERS = Set.of("water", "waterway");
+	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation");
 
 	/** A water area: rings of interleaved x,y in global z15 sample coordinates. Even-odd filled. */
 	public record Area(List<double[]> rings, boolean sea) {
@@ -41,12 +41,22 @@ public final class OsmWater {
 	public record Line(double[] points, double widthMeters) {
 	}
 
-	/** The water in one zoom-14 tile. {@code known} is false when the map has no tile or could not be fetched. */
-	public record Shapes(List<Area> areas, List<Line> lines, boolean known) {
+	/**
+	 * A road, track, path or railway centreline, in global z15 sample coordinates, with its bounding
+	 * box. Tunnels are left out: they run inside the ground.
+	 */
+	public record Way(double[] points, double widthMeters, byte kind, boolean bridge, double minX, double minY, double maxX, double maxY) {
+	}
+
+	/**
+	 * The water and ways in one zoom-14 tile. {@code known} is false when the map has no tile or could
+	 * not be fetched.
+	 */
+	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
-		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false);
+		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
-		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false);
+		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -165,6 +175,7 @@ public final class OsmWater {
 		double samplesPerTile = (double) Mercator.TILE_SIZE * (1 << (Mercator.ZOOM - ZOOM));
 		List<Area> areas = new ArrayList<>();
 		List<Line> lines = new ArrayList<>();
+		List<Way> ways = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
 			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
 				continue;
@@ -185,6 +196,27 @@ public final class OsmWater {
 					continue;
 				}
 				areas.add(new Area(parts, "ocean".equals(cls)));
+			} else if (f.layer().equals("transportation") && f.type() == VectorTile.LINE) {
+				byte kind = Ways.kind(cls, f.string("subclass"));
+				if (kind != Ways.NONE) {
+					boolean bridge = "bridge".equals(f.string("brunnel"));
+					double width = Ways.widthMeters(kind, cls);
+					for (double[] part : parts) {
+						if (part.length >= 4) {
+							double minX = Double.MAX_VALUE;
+							double minY = Double.MAX_VALUE;
+							double maxX = -Double.MAX_VALUE;
+							double maxY = -Double.MAX_VALUE;
+							for (int i = 0; i < part.length; i += 2) {
+								minX = Math.min(minX, part[i]);
+								maxX = Math.max(maxX, part[i]);
+								minY = Math.min(minY, part[i + 1]);
+								maxY = Math.max(maxY, part[i + 1]);
+							}
+							ways.add(new Way(part, width, kind, bridge, minX, minY, maxX, maxY));
+						}
+					}
+				}
 			} else if (f.layer().equals("waterway") && f.type() == VectorTile.LINE) {
 				double width = switch (cls == null ? "" : cls) {
 					case "river" -> 12.0;
@@ -201,7 +233,7 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true);
+		return new Shapes(areas, lines, true, ways);
 	}
 
 	/** The zoom-14 tiles covering a range of global z15 sample coordinates. */

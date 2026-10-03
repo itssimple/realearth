@@ -39,6 +39,23 @@ the projection of web maps and of the elevation tiles themselves, with 0°, 0° 
 Worlds created before the Mercator map keep the older **sinusoidal** map (one block per metre everywhere, but
 north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to make new worlds that way.
 
+## Towns, roads and railways
+
+- **Towns and cities fill with villages.** Wherever the real land is mostly built-up (ESA WorldCover), villages
+  stand about 160 blocks apart, so a city is a sprawl of villages with villagers, and the countryside keeps
+  vanilla's scattered ones. The style follows the climate: plains villages in most of Europe, taiga villages in
+  the north, snowy ones in the far north, desert and savanna villages in hot countries. Pillager outposts stay out
+  of towns, and villages keep clear of railways and motorways.
+- **Roads, tracks and paths** come from OpenStreetMap: asphalt (grey concrete) for streets and highways, sized by
+  class, coarse dirt and gravel for tracks, dirt paths for footways and cycleways. Roads are levelled across
+  their width where the ground allows.
+- **Railways and trams** are real rail on a gravel bed, curving and sloping to follow the line.
+- **Bridges** carry roads and railways over water and valleys on a deck at the height of the bridge's ends.
+  Tunnels are left inside the ground.
+
+Only newly generated chunks get these: in a world from an earlier version, towns and roads start where new
+terrain begins.
+
 ## Two ways to play
 
 - **Real Earth world type.** On the Create World screen, set *World Type* to **Real Earth**. The Overworld itself
@@ -246,6 +263,7 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `despikeMeters` | 25.0 | Spike threshold |
 | `useMapWater`, `mapTileJson` | true, OpenFreeMap | Water from OpenStreetMap |
 | `useLandCover`, `landCoverUrl` | true, ESA S3 | Land cover from ESA WorldCover |
+| `useRoads`, `useRailways` | true, true | Roads, tracks and paths; railways and trams (need `useMapWater`'s map tiles) |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |
 | `lakeWindowSamples`, `lakeFlatnessMeters` | 17, 0.02 | How large and how flat a lake must be |
 | `maxLakeDepthMeters` | 12 | Deepest carved lake bed |
@@ -272,7 +290,8 @@ world; only the start point and scale differ.)
     for land and water alike, so its city channels stand at 26 m (real: under 1 m), and Mälaren reads 4 m
     (real: 0.7 m). National LiDAR (e.g. Lantmäteriet's 1 m model for Sweden) would fix this region by region.
   - Without map water (offline), land below sea level that isn't a flat lake floods.
-- **No roads, railways or buildings yet.** Built-up land is paved ground with yards.
+- **Towns are villages, not cities.** No real buildings or high-rises yet. Village houses may stand across
+  streets, since vanilla villages don't know about the real road network.
 - **Chunk memory.** Chunks are 254 sections tall (vanilla has 24). Solid rock and open ocean are stored compactly,
   but each loaded chunk still costs several times a vanilla one.
 - Some shallow caves stop just under the surface, leaving a thin roof of dirt.
