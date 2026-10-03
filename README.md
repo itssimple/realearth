@@ -339,6 +339,23 @@ Distant Horizons is a compile-only dependency: download `DistantHorizons-3.3.3-2
 Modrinth into `libs/` before building. The elevation tile approach (global sample grid, pixel-centre sampling,
 the 404-over-ocean behaviour) carried over from the GeoWorld project.
 
+## About how this mod was made
+
+Real Earth was written almost entirely by an AI, **Claude (by Anthropic)**, working in Claude Code at my direction.
+I want to be upfront about that.
+
+**What I did:** came up with the idea and decided what the mod should be and do, chose between the options
+offered (the Mercator map, the world type, real buildings instead of villages, and so on), set the requirements
+(one block per metre, storeys of at least 4.5 m, up to 10 floors, credits for every data source), play-tested it,
+found problems in game and reported them, and decided when it was ready to release.
+
+**What Claude did:** wrote the code, the data handling, the self-tests and the documentation (including this
+page), researched the data sources and their licences, ran the automated tests and screenshot checks, and fixed
+the bugs that turned up, including the ones I found while playing.
+
+I have not reviewed the code line by line. It is tested by its own automated self-tests and by play-testing,
+but treat it as the beta it is, and please report anything that looks wrong.
+
 ## Data and credits
 
 The full attribution, as each licence words it, is in [CREDITS.md](CREDITS.md), which is also packaged in the mod's

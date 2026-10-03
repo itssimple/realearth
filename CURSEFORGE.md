@@ -71,6 +71,23 @@ and reused, so places you have been work offline. The climate map is bundled.
   larger.
 - The elevation data is coarse in places (central Stockholm is unusually flat, for example).
 
+## About how this mod was made
+
+Real Earth was written almost entirely by an AI, **Claude (by Anthropic)**, working in Claude Code at my direction.
+I want to be upfront about that.
+
+**What I did:** came up with the idea and decided what the mod should be and do, chose between the options
+offered (the Mercator map, the world type, real buildings instead of villages, and so on), set the requirements
+(one block per metre, storeys of at least 4.5 m, up to 10 floors, credits for every data source), play-tested it,
+found problems in game and reported them, and decided when it was ready to release.
+
+**What Claude did:** wrote the code, the data handling, the self-tests and the documentation (including this
+page), researched the data sources and their licences, ran the automated tests and screenshot checks, and fixed
+the bugs that turned up, including the ones I found while playing.
+
+I have not reviewed the code line by line. It is tested by its own automated self-tests and by play-testing,
+but treat it as the beta it is, and please report anything that looks wrong.
+
 ## Credits
 
 Map data © OpenStreetMap contributors (ODbL), served by OpenFreeMap (© OpenMapTiles). Elevation: Terrain Tiles
