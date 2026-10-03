@@ -558,8 +558,10 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			}
 			case WorldCover.BUILT -> {
 				// Between the town's villages: lawns and yards, with lots of paving, gravel and bare earth.
+				// In dry country the open ground is sand and packed earth rather than lawn.
 				double h = GeoNoise.hash(worldX >> 3, 7, worldZ >> 3);
-				BlockState ground0 = h < 0.6 ? grass : h < 0.78 ? block(Blocks.POLISHED_ANDESITE) : h < 0.9 ? block(Blocks.GRAVEL) : block(Blocks.COARSE_DIRT);
+				BlockState open = desert ? block(Blocks.SAND) : Koppen.arid(climate) ? block(Blocks.COARSE_DIRT) : grass;
+				BlockState ground0 = h < 0.6 ? open : h < 0.78 ? block(Blocks.POLISHED_ANDESITE) : h < 0.9 ? block(Blocks.GRAVEL) : block(Blocks.COARSE_DIRT);
 				return new Column(top, waterTop, ground0, dirt, 3, STONE, shore, null);
 			}
 			case WorldCover.WETLAND, WorldCover.MANGROVES -> {

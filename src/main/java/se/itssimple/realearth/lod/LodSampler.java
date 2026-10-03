@@ -211,7 +211,7 @@ public final class LodSampler {
 			case WorldCover.CROPS -> "minecraft:farmland";
 			// Towns are mostly lawns between their villages (see EarthChunkGenerator), and should look the
 			// same from afar as close up; their streets show as the roads they are.
-			case WorldCover.BUILT -> "minecraft:grass_block";
+			case WorldCover.BUILT -> Koppen.desert(climate) ? "minecraft:sand" : Koppen.arid(climate) ? "minecraft:coarse_dirt" : "minecraft:grass_block";
 			case WorldCover.WETLAND, WorldCover.MANGROVES -> "minecraft:mud";
 			case WorldCover.MOSS -> "minecraft:moss_block";
 			case WorldCover.BARE -> Koppen.hotArid(climate) || Koppen.tropical(climate) ? "minecraft:sand" : "minecraft:gravel";
