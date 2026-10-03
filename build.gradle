@@ -32,6 +32,16 @@ loom {
 			programArgs "--quickPlaySingleplayer", "playtest"
 			runDir "run-shots"
 		}
+		clean {
+			client()
+			name "Clean Client (no other mods)"
+			vmArg "-Drealearth.shots=true"
+			vmArg "-Drealearth.shotList=towns"
+			vmArg "-Drealearth.shotTicks=900"
+			vmArg "-Drealearth.shotOnly=${project.findProperty('shotOnly') ?: 'fagersjo,city-street'}"
+			programArgs "--quickPlaySingleplayer", "clean", "--width", "1920", "--height", "1080"
+			runDir "run-clean"
+		}
 		shots {
 			client()
 			name "Screenshot Tour"
