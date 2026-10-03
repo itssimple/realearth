@@ -846,6 +846,52 @@ final class SelfTest {
 			check(!villagers.isEmpty(), "villagers live in the buildings: %d in 5 x 5 chunks", villagers.size());
 		}
 
+		// Paris: no building stands taller than its storeys allow, in chunks or in distant terrain.
+		{
+			TerrainField field = RealEarth.terrain();
+			int px = (int) field.projection().blockX(48.8610, 2.3420) >> 4;
+			int pz = (int) field.projection().blockZ(48.8610) >> 4;
+			int worst = 0;
+			String worstAt = "";
+			for (int cx = px - 8; cx <= px + 8; cx++) {
+				for (int cz = pz - 8; cz <= pz + 8; cz++) {
+					ChunkTerrain c;
+					try {
+						c = field.chunkBlocking(cx, cz, 120);
+					} catch (Exception e) {
+						continue;
+					}
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							int k = ChunkTerrain.index(x, z);
+							if (c.building[k] != 0) {
+								int tall = c.roofY[k] - c.topSolidY[k];
+								if (tall > worst) {
+									worst = tall;
+									var plan = c.plans.get(c.building[k] - 1);
+									worstAt = String.format(Locale.ROOT, "chunk %d,%d: roof Y %d over ground Y %d, floor Y %d, %d floors x %d, rise %d",
+										cx, cz, c.roofY[k], c.topSolidY[k], plan.floorY, plan.floors, plan.storey, plan.roofRise);
+								}
+							}
+						}
+					}
+				}
+			}
+			log("tallest building column in central Paris: %d blocks (%s)", worst, worstAt);
+			check(worst <= RealEarth.config().maxFloors * 6 + 20, "Paris buildings stay within %d storeys", RealEarth.config().maxFloors);
+			try {
+				var lod = new se.itssimple.realearth.lod.LodSampler(field).patch(px * 16 - 128, pz * 16 - 128, 64, 4);
+				int lodMax = Integer.MIN_VALUE;
+				for (var col : lod) {
+					lodMax = Math.max(lodMax, col.groundTop());
+				}
+				log("distant terrain over central Paris: highest column Y %d", lodMax);
+				check(lodMax < VerticalScale.SEA_LEVEL_Y + 300, "distant Paris has no towering columns (highest Y %d)", lodMax);
+			} catch (Exception e) {
+				check(false, "distant Paris: %s", e);
+			}
+		}
+
 		// Dry country: the Grand Canyon's walls are banded terracotta and its floor red earth, not grass.
 		{
 			TerrainField field = RealEarth.terrain();

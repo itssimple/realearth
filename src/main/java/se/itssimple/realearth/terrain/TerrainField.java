@@ -65,6 +65,7 @@ public final class TerrainField implements AutoCloseable {
 			return t;
 		});
 		this.processed = lru(48);
+		Buildings.clearCache();
 		this.chunks = lru(2048);
 	}
 

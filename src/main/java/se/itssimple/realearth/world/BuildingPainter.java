@@ -55,19 +55,26 @@ final class BuildingPainter {
 				state(Blocks.SMOOTH_SANDSTONE), state(Blocks.SANDSTONE), Blocks.SANDSTONE_STAIRS, state(Blocks.CUT_SANDSTONE), state(Blocks.SMOOTH_SANDSTONE),
 				state(v % 2 == 0 ? Blocks.TERRACOTTA : Blocks.CUT_SANDSTONE), glass, Blocks.JUNGLE_DOOR);
 			case SAVANNA -> new Palette(state(big ? (v % 2 == 0 ? Blocks.ORANGE_TERRACOTTA : Blocks.WHITE_TERRACOTTA) : Blocks.ACACIA_PLANKS),
-				state(Blocks.ACACIA_LOG), state(Blocks.ACACIA_PLANKS), state(Blocks.COBBLESTONE), Blocks.ACACIA_STAIRS, state(Blocks.ACACIA_PLANKS),
+				state(Blocks.ACACIA_LOG), state(Blocks.ACACIA_PLANKS), state(Blocks.COBBLESTONE), big ? Blocks.BRICK_STAIRS : Blocks.ACACIA_STAIRS,
+				state(big ? Blocks.BRICKS : Blocks.ACACIA_PLANKS),
 				state(Blocks.SMOOTH_STONE), state(Blocks.TERRACOTTA), glass, Blocks.ACACIA_DOOR);
 			case TAIGA, SNOWY -> new Palette(state(big ? (v % 2 == 0 ? Blocks.STONE_BRICKS : Blocks.SPRUCE_PLANKS) : Blocks.SPRUCE_PLANKS),
-				state(big ? Blocks.STONE_BRICKS : Blocks.SPRUCE_LOG), state(Blocks.SPRUCE_PLANKS), state(Blocks.COBBLESTONE), Blocks.SPRUCE_STAIRS,
-				state(Blocks.SPRUCE_PLANKS), state(p.style == BuildingPlan.Style.SNOWY ? Blocks.SNOW_BLOCK : Blocks.SMOOTH_STONE),
+				state(big ? Blocks.STONE_BRICKS : Blocks.SPRUCE_LOG), state(Blocks.SPRUCE_PLANKS), state(Blocks.COBBLESTONE),
+				big && v % 3 == 0 ? Blocks.DEEPSLATE_TILE_STAIRS : Blocks.SPRUCE_STAIRS,
+				state(big && v % 3 == 0 ? Blocks.DEEPSLATE_TILES : Blocks.SPRUCE_PLANKS), state(p.style == BuildingPlan.Style.SNOWY ? Blocks.SNOW_BLOCK : Blocks.SMOOTH_STONE),
 				state(Blocks.COBBLESTONE), glass, Blocks.SPRUCE_DOOR);
 			case PLAINS -> {
 				if (big) {
 					Block[] walls = {Blocks.BRICKS, Blocks.STONE_BRICKS, Blocks.WHITE_TERRACOTTA, Blocks.LIGHT_GRAY_TERRACOTTA, Blocks.SMOOTH_SANDSTONE,
 						Blocks.POLISHED_ANDESITE};
 					Block wall = walls[v % walls.length];
+					// Town roofs: red tile, slate, dark timber or copper-green; flat roofs in greys.
+					Block[] roofs = {Blocks.BRICK_STAIRS, Blocks.DEEPSLATE_TILE_STAIRS, Blocks.DARK_OAK_STAIRS, Blocks.OXIDIZED_CUT_COPPER_STAIRS, Blocks.BRICK_STAIRS};
+					Block[] roofFulls = {Blocks.BRICKS, Blocks.DEEPSLATE_TILES, Blocks.DARK_OAK_PLANKS, Blocks.OXIDIZED_CUT_COPPER, Blocks.BRICKS};
+					Block[] flats = {Blocks.SMOOTH_STONE, Blocks.GRAY_CONCRETE, Blocks.POLISHED_ANDESITE, Blocks.LIGHT_GRAY_CONCRETE, Blocks.POLISHED_DEEPSLATE};
+					int r = (v >> 3) % roofs.length;
 					yield new Palette(state(wall), state(wall == Blocks.STONE_BRICKS ? Blocks.POLISHED_ANDESITE : Blocks.STONE_BRICKS), state(Blocks.OAK_PLANKS),
-						state(Blocks.STONE_BRICKS), Blocks.STONE_BRICK_STAIRS, state(Blocks.STONE_BRICKS), state(Blocks.SMOOTH_STONE), state(Blocks.STONE_BRICKS),
+						state(Blocks.STONE_BRICKS), roofs[r], state(roofFulls[r]), state(flats[(v >> 5) % flats.length]), state(Blocks.STONE_BRICKS),
 						glass, Blocks.OAK_DOOR);
 				}
 				Block[] walls = {Blocks.OAK_PLANKS, Blocks.OAK_PLANKS, Blocks.WHITE_TERRACOTTA, Blocks.BIRCH_PLANKS, Blocks.COBBLESTONE};

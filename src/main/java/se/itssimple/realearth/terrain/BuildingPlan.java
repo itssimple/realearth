@@ -156,11 +156,47 @@ public final class BuildingPlan {
 		while (floors > 1 && floorY + floors * storey + 8 > VerticalScale.MAX_Y) {
 			floors--;
 		}
-		double shortSide = Math.min(boundsX(rings), boundsZ(rings));
-		boolean pitched = style != Style.DESERT && floors <= 3 && shortSide <= 18 && shortSide >= 4;
-		int rise = pitched ? (int) Math.max(2, Math.min(6, Math.floor(shortSide / 2))) : 0;
+		// Pitched roofs up to six storeys on wings up to 30 blocks deep -- measured as the farthest any
+		// point inside is from a wall, so a block round a courtyard counts by its wings, not its outline.
+		// Wider, taller, and in desert towns: flat roofs.
+		double halfDepth = halfDepth(rings);
+		boolean pitched = style != Style.DESERT && floors <= 6 && halfDepth <= 15 && halfDepth >= 2;
+		int rise = pitched ? (int) Math.max(2, Math.min(8, Math.floor(halfDepth))) : 0;
 		int palette = (int) ((id >>> 7) & 0xFF);
 		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, doors);
+	}
+
+	/** The farthest any point inside the footprint is from its edge, in blocks: half the depth of its widest wing. */
+	private static double halfDepth(List<double[]> rings) {
+		double x0 = Double.MAX_VALUE;
+		double x1 = -Double.MAX_VALUE;
+		double z0 = Double.MAX_VALUE;
+		double z1 = -Double.MAX_VALUE;
+		for (double[] r : rings) {
+			for (int i = 0; i < r.length; i += 2) {
+				x0 = Math.min(x0, r[i]);
+				x1 = Math.max(x1, r[i]);
+				z0 = Math.min(z0, r[i + 1]);
+				z1 = Math.max(z1, r[i + 1]);
+			}
+		}
+		double step = Math.max(1.0, Math.sqrt((x1 - x0) * (z1 - z0) / 400.0));
+		double best = 0;
+		for (double z = z0 + step / 2; z < z1; z += step) {
+			for (double x = x0 + step / 2; x < x1; x += step) {
+				if (contains(rings, x, z)) {
+					double d = Double.MAX_VALUE;
+					for (double[] r : rings) {
+						int n = r.length / 2;
+						for (int i = 0, j = n - 1; i < n; j = i++) {
+							d = Math.min(d, segment(x, z, r[j * 2], r[j * 2 + 1], r[i * 2], r[i * 2 + 1]));
+						}
+					}
+					best = Math.max(best, d);
+				}
+			}
+		}
+		return best;
 	}
 
 	private static double boundsX(List<double[]> rings) {

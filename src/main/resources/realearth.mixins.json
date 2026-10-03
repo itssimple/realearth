@@ -14,7 +14,9 @@
     "ServerLevelAccessor",
     "PersistentEntitySectionManagerAccessor",
     "EntityStorageAccessor",
-    "InitialSpawnMixin"
+    "InitialSpawnMixin",
+    "RegistryLifecycleMixin",
+    "DimensionStabilityMixin"
   ],
   "injectors": {
     "defaultRequire": 1

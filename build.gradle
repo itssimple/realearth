@@ -34,7 +34,7 @@ loom {
 			vmArg "-Drealearth.dhValidate=true"
 			vmArg "-Drealearth.lodCanopy=${project.findProperty('lodCanopy') ?: 'true'}"
 			vmArg "-Drealearth.shotOnly=${project.findProperty('shotOnly') ?: ''}"
-			programArgs "--quickPlaySingleplayer", "earthtest"
+			programArgs "--quickPlaySingleplayer", "earthtest", "--width", "1920", "--height", "1080"
 			runDir "run-shots"
 		}
 	}

@@ -26,6 +26,22 @@ final class Buildings {
 	/** A door looks this far for a street, in metres. */
 	private static final double DOOR_REACH_METERS = 40;
 
+	/**
+	 * Plans already worked out, by building id. A building is planned once, however many chunks it
+	 * touches; and the plan depends only on map data and terrain, so reusing it changes nothing.
+	 */
+	private static final Map<Long, BuildingPlan> PLANS = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(1024, 0.75f, true) {
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<Long, BuildingPlan> eldest) {
+			return size() > 8192;
+		}
+	});
+
+	/** Forgets all plans; for a new world, whose projection may differ. */
+	static void clearCache() {
+		PLANS.clear();
+	}
+
 	private Buildings() {
 	}
 
@@ -114,6 +130,13 @@ final class Buildings {
 		List<Candidate> planned = new ArrayList<>();
 		Koppen koppen = Koppen.get();
 		for (Candidate c : candidates) {
+			long cachedId = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
+			BuildingPlan cached = PLANS.get(cachedId);
+			if (cached != null) {
+				plans.add(cached);
+				planned.add(c);
+				continue;
+			}
 			double area = BuildingPlan.area(c.blockRings());
 			if (area < MIN_AREA) {
 				continue;
@@ -140,8 +163,12 @@ final class Buildings {
 			double lon = Projection.wrapLongitude((centre[0] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0);
 			int climate = koppen == null ? 0 : koppen.classAt(lat, lon);
 			long id = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
-			plans.add(BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), area, field, style(climate),
-				doors(c, lat), storeyMeters, maxFloors));
+			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), area, field, style(climate),
+				doors(c, lat), storeyMeters, maxFloors);
+			if (!t.degraded) {
+				PLANS.put(id, plan);
+			}
+			plans.add(plan);
 			planned.add(c);
 		}
 		if (plans.isEmpty()) {

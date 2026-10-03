@@ -66,6 +66,7 @@ final class ShotTour {
 	/** Towns, streets, railways and bridges in Stockholm. */
 	private static final List<Shot> TOWNS = List.of(
 		new Shot("city-street", 59.3150, 18.0720, 25, 90, 25),
+		new Shot("inside", 59.3150, 18.0720, 0, 90, 10),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
@@ -153,6 +154,30 @@ final class ShotTour {
 		}
 	}
 
+	/** A room column on the first floor of the nearest building with two or more storeys, at eye height. */
+	private static BlockPos findRoom(TerrainField field, int x, int z) {
+		for (int r = 0; r <= 4; r++) {
+			for (int dx = -r; dx <= r; dx++) {
+				for (int dz = -r; dz <= r; dz++) {
+					var t = field.chunkIfReady((x >> 4) + dx, (z >> 4) + dz);
+					if (t == null) {
+						continue;
+					}
+					for (int lx = 2; lx < 14; lx++) {
+						for (int lz = 2; lz < 14; lz++) {
+							var plan = t.buildingAt(lx, lz);
+							if (plan == null || plan.floors < 2 || plan.edgeDistance(((x >> 4) + dx) * 16 + lx, ((z >> 4) + dz) * 16 + lz) < 3) {
+								continue;
+							}
+							return new BlockPos(((x >> 4) + dx) * 16 + lx, plan.floorY + plan.storey + 2, ((z >> 4) + dz) * 16 + lz);
+						}
+					}
+				}
+			}
+		}
+		return null;
+	}
+
 	/** The most open air pocket below the ground near (x, z): a cave to look around in. */
 	private static BlockPos findOpenSpace(ServerLevel level, int x, int z, int minDepth, int maxDepth) {
 		BlockPos best = new BlockPos(x, RealEarth.surfaceY(level, Heightmap.Types.OCEAN_FLOOR, x, z) - minDepth, z);
@@ -207,7 +232,13 @@ final class ShotTour {
 			server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "time set noon");
 			player.setGameMode(GameType.SPECTATOR);
 			BlockPos camera = new BlockPos(x, (int) Math.min(ground + shot.above, earth.getMaxY() - 4), z);
-			if (shot.minDepth > 0) {
+			if (shot.name.startsWith("inside")) {
+				// Inside the nearest building with storeys above, on its first floor, at eye height.
+				BlockPos room = findRoom(field, x, z);
+				if (room != null) {
+					camera = room;
+				}
+			} else if (shot.minDepth > 0) {
 				player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, 20 * 600, 0, false, false));
 				camera = findOpenSpace(earth, x, z, shot.minDepth, shot.maxDepth);
 			}
