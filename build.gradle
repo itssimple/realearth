@@ -77,5 +77,5 @@ java {
 
 // The data sources' licences ask for attribution wherever the mod is passed on.
 jar {
-	from("CREDITS.md")
+	from("CREDITS.md", "LICENSE")
 }

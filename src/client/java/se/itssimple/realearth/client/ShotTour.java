@@ -65,6 +65,8 @@ final class ShotTour {
 
 	/** Towns, streets, railways and bridges in Stockholm. */
 	private static final List<Shot> TOWNS = List.of(
+		new Shot("fagersjo", 59.2465, 18.0623, 25, 0, 30),
+		new Shot("fagersjo-sky", 59.2480, 18.0640, 150, 0, 45),
 		new Shot("city-street", 59.3150, 18.0720, 25, 90, 25),
 		new Shot("inside", 59.3150, 18.0720, 0, 90, 10),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
