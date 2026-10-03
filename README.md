@@ -90,6 +90,7 @@ The frame and activator are tags, so a datapack can change them: `realearth:port
 | `/earth repair [all]` | Regenerate chunks that were generated from placeholders while offline (see below) |
 | `/earth cache` | Cache size per source, this session's downloads, network state, chunks waiting for repair |
 | `/earth cache clear` | Delete the whole download cache (permission level 4) |
+| `/earth credits` | Where Earth's data comes from, with links (everyone) |
 
 `download`, `repair` and `cache` need permission level 2.
 
@@ -322,8 +323,14 @@ the 404-over-ocean behaviour) carried over from the GeoWorld project.
 
 ## Data and credits
 
-- Elevation: Mapzen/AWS Terrain Tiles (SRTM, GMTED, ETOPO1, USGS 3DEP and others; see their attribution terms).
-- Water: © OpenStreetMap contributors (ODbL), served as vector tiles by OpenFreeMap.
+The full attribution, as each licence words it, is in [CREDITS.md](CREDITS.md), which is also packaged in the mod's
+jar. In game, `/earth credits` lists the sources with links, the F3 screen on Earth shows a one-line credit, and
+players see it when they join or arrive on Earth.
+
+- Elevation: Terrain Tiles on AWS (Mapzen): USGS 3DEP, SRTM and GMTED2010, NOAA ETOPO1, Copernicus EU-DEM and
+  national data from Australia, Austria, Canada, Mexico, New Zealand, Norway and the UK, and ArcticDEM.
+- Water, roads, railways and bridges: © OpenStreetMap contributors (ODbL), served as vector tiles by OpenFreeMap
+  in the OpenMapTiles schema (© OpenMapTiles).
 - Land cover: ESA WorldCover 10 m 2021 v200, © ESA WorldCover project / contains modified Copernicus Sentinel
   data (2021), CC BY 4.0.
 - Climate: Beck, H. E., et al. (2023). High-resolution (1 km) Köppen-Geiger maps for 1901–2099 based on

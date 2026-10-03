@@ -67,3 +67,8 @@ java {
 	sourceCompatibility = JavaVersion.VERSION_25
 	targetCompatibility = JavaVersion.VERSION_25
 }
+
+// The data sources' licences ask for attribution wherever the mod is passed on.
+jar {
+	from("CREDITS.md")
+}

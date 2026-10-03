@@ -135,12 +135,21 @@ public class RealEarth implements ModInitializer {
 				DegradedChunks.touch(level.dimension().identifier().toString(), pos.getX() >> 4, pos.getZ() >> 4);
 			}
 		});
+		// Attribution where the data is seen: arriving on Earth through a portal.
+		net.fabricmc.fabric.api.entity.event.v1.ServerEntityLevelChangeEvents.AFTER_PLAYER_CHANGE_LEVEL.register((player, from, to) -> {
+			if (isEarth(to) && !isEarth(from)) {
+				player.sendSystemMessage(Credits.greeting());
+			}
+		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (server.getTickCount() % 1200 == 0) {
 				DegradedChunks.save();
 			}
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+			if (isEarth(handler.player.level())) {
+				handler.player.sendSystemMessage(Credits.greeting());
+			}
 			int degraded = DegradedChunks.count();
 			if (degraded > 0 && server.getPlayerList().isOp(handler.player.nameAndId())) {
 				handler.player.sendSystemMessage(Component.literal("[Real Earth] " + degraded + " chunk" + (degraded == 1 ? " was" : "s were")

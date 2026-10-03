@@ -819,5 +819,6 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		double lat = field.projection().latitudeAt(pos.getZ() + 0.5);
 		double lon = field.projection().longitudeAt(pos.getX() + 0.5, lat);
 		result.add(String.format(Locale.ROOT, "Real Earth: %.5f, %.5f  elevation %.0f m", lat, lon, field.toElevation(pos.getY(), lat)));
+		result.add(se.itssimple.realearth.Credits.SHORT);
 	}
 }

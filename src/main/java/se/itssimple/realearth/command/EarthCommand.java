@@ -33,6 +33,7 @@ import se.itssimple.realearth.terrain.TerrainField;
  * /earth download <radius> [<lat> <lon>] -- fetch an area's data ahead of time; /earth download cancel
  * /earth repair [all]       -- regenerate chunks that were generated offline from placeholder data
  * /earth cache [clear]      -- how big the download cache is; delete it
+ * /earth credits            -- where Earth's data comes from, as its licences ask
  */
 public final class EarthCommand {
 	private EarthCommand() {
@@ -51,6 +52,13 @@ public final class EarthCommand {
 	public static void register(CommandDispatcher<CommandSourceStack> dispatcher, int teleportPermissionLevel) {
 		dispatcher.register(Commands.literal("earth")
 			.then(Commands.literal("where").executes(ctx -> where(ctx.getSource())))
+			.then(Commands.literal("credits").executes(ctx -> {
+				ctx.getSource().sendSuccess(() -> Component.literal("Real Earth is built from open data:"), false);
+				for (Component line : se.itssimple.realearth.Credits.full()) {
+					ctx.getSource().sendSuccess(() -> line, false);
+				}
+				return 1;
+			}))
 			.then(Commands.literal("origin").executes(ctx -> origin(ctx.getSource())))
 			.then(Commands.literal("tp")
 				.requires(Commands.hasPermission(permission(teleportPermissionLevel)))
