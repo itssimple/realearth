@@ -523,7 +523,11 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		// Cliffs and steep slopes in dry country: banded terracotta, deep enough to cover the exposed
 		// face down to the neighbouring column. Sand seas keep their sandstone.
 		boolean dunes = cover == WorldCover.BARE && Koppen.hotArid(climate);
-		if ((Koppen.arid(climate) || biome == Biomes.BADLANDS) && !dunes && slope >= (desert ? 1 : 2)) {
+		// Measured across the column (left neighbour to right), so a single terrace step on flat ground
+		// doesn't count but a 45-degree canyon wall does.
+		int across = Math.max(Math.abs(t.topSolidY[ChunkTerrain.index(x + 1, z)] - t.topSolidY[ChunkTerrain.index(x - 1, z)]),
+			Math.abs(t.topSolidY[ChunkTerrain.index(x, z + 1)] - t.topSolidY[ChunkTerrain.index(x, z - 1)]));
+		if ((Koppen.arid(climate) || biome == Biomes.BADLANDS) && !dunes && across >= (desert ? 2 : 3)) {
 			return new Column(top, waterTop, Strata.at(top, worldX, worldZ), STONE, 0, STONE, shore, null, Math.min(48, slope + 4));
 		}
 

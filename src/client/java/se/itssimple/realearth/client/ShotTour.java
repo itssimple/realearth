@@ -69,7 +69,13 @@ final class ShotTour {
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
-		new Shot("suburb", 59.3380, 17.9400, 60, -90, 30)
+		new Shot("suburb", 59.3380, 17.9400, 60, -90, 30),
+		new Shot("paris-sky", 48.8610, 2.3420, 250, 0, 55),
+		new Shot("new-york-sky", 40.7580, -73.9855, 250, 180, 50),
+		new Shot("brooklyn-bridge", 40.7095, -74.0010, 30, -45, 15),
+		new Shot("tokyo-station", 35.6812, 139.7671, 40, 180, 35),
+		new Shot("cairo-sky", 30.0444, 31.2357, 200, 0, 45),
+		new Shot("rio-sky", -22.9068, -43.1729, 200, 0, 45)
 	);
 
 	/** Structures found by the self-test in the Earth world type test world (its seed), relative to the start point. */
