@@ -326,8 +326,8 @@ final class SelfTest {
 					var box = new net.minecraft.world.phys.AABB(centre).inflate(56, 2000, 56);
 					int before = earth.getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class, box).size();
 					int came = 0;
-					for (int i = 0; i < 20; i++) {
-						if (se.itssimple.realearth.world.Townsfolk.comeHome(earth, field, centre, before + 3, List.of()) != null) {
+					for (int i = 0; i < 40; i++) {
+						if (se.itssimple.realearth.world.Townsfolk.comeHome(earth, field, centre, RealEarth.config().townsfolk, List.of()) != null) {
 							came++;
 						}
 					}
@@ -346,8 +346,9 @@ final class SelfTest {
 				}).join();
 				server.submit(() -> forceArea(earth, homesAt[0], homesAt[1], 4, false)).join();
 				log("townsfolk round the centre of Stockholm: %d villagers there, %d came home (%d there then), %d went again", seen[0], seen[1], seen[2], seen[3]);
-				check(seen[1] >= 1 && seen[1] <= 3 && seen[2] == seen[0] + seen[1] && seen[3] == seen[1],
-					"villagers come home round a player, no more than there is room for, and go again (%d came, %d went)", seen[1], seen[3]);
+				int most = RealEarth.config().townsfolk;
+				check(seen[1] >= 1 && seen[2] == seen[0] + seen[1] && seen[2] >= Math.min(12, most) && seen[2] <= Math.max(most, seen[0]) && seen[3] == seen[1],
+					"a city centre fills with villagers, up to %d, and they go again (%d there, %d came, %d went)", most, seen[2], seen[1], seen[3]);
 			}
 		} catch (Throwable e) {
 			RealEarth.LOGGER.error("[selftest] crashed", e);

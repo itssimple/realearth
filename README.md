@@ -74,8 +74,9 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
     flower pots, lanterns, and villager job blocks. Beds, chests and barrels are block entities (drawn as models
     or kept in memory), so only about one bed in ten is a real bed, the rest made up of wool under a blanket,
     and chests and barrels are kept few. A villager moves into about one chunk of town in twenty, into a real
-    bed, and takes up the trade it finds. Round each player more come home, up to `townsfolk` (8) in the
-    town within about 50 blocks, one for every two beds at most, to beds out of sight; children among them.
+    bed, and takes up the trade it finds. Round each player more come home to beds out of sight, one for every
+    four real beds in the town within about 50 blocks, up to `townsfolk` (24): a few in a village, a busy
+    city centre; children among them.
     Once every player is far away they go again, unless someone has traded with one, named it or leashed it.
     So the streets near you are busy, and a city of thousands of beds doesn't slow the server down.
   - **Loot.** House chests hold what a village house's chest of the same climate holds, pantry barrels household
@@ -324,7 +325,7 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `placeTitles` | true | Show a town's name on walking into it, and the district's above the hotbar |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
 | `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
-| `townsfolk` | 8 | Most villagers kept in the town round each player (one per two beds at most); 0 turns it off |
+| `townsfolk` | 24 | Most villagers kept in the town round each player (one per four real beds there); 0 turns it off |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |
 | `lakeWindowSamples`, `lakeFlatnessMeters` | 17, 0.02 | How large and how flat a lake must be |
 | `maxLakeDepthMeters` | 12 | Deepest carved lake bed |

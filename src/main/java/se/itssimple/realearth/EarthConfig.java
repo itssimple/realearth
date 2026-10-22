@@ -97,11 +97,11 @@ public final class EarthConfig {
 	 */
 	public double villagerChance = 0.2;
 	/**
-	 * Most villagers kept in the town round each player (about 50 blocks each way), one for every two
-	 * beds there at most: they come home to beds out of sight, and go again once everyone is far away,
-	 * unless traded with. 0 turns it off.
+	 * Most villagers kept in the town round each player (about 50 blocks each way). Within that, one for
+	 * every four real beds there, so villages stay quiet and city centres are busy. They come home to beds
+	 * out of sight and go again once everyone is far away, unless traded with. 0 turns it off.
 	 */
-	public int townsfolk = 8;
+	public int townsfolk = 24;
 	public String landCoverUrl = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif";
 
 	/** Lakes are perfectly flat in the source data; this finds them and fills them with water. Used where map water is not. */

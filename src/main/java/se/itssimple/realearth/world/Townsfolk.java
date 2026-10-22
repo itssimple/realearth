@@ -22,8 +22,9 @@ import se.itssimple.realearth.terrain.TerrainField;
 /**
  * People in the town around each player. A city has far too many beds for a villager in each, so only
  * a few move in as it is generated; this keeps the streets near a player busy as well. Every few
- * seconds, where the town round a player has fewer villagers than it has room for, one comes home to a
- * bed out of sight; once every player is far away, those that came this way and that nobody has traded
+ * seconds, where the town round a player has fewer villagers than it has room for (one per four real
+ * beds, so a village stays quiet and a city centre is busy, up to the config's most), a few come home
+ * to beds out of sight; once every player is far away, those that came this way and that nobody has traded
  * with, named or leashed go again. Trade with one and it stays.
  */
 public final class Townsfolk {
@@ -32,7 +33,9 @@ public final class Townsfolk {
 	/** The town round a player: this many chunks each way. */
 	private static final int AROUND = 3;
 	/** Room for one villager per this many beds in the town round a player. */
-	private static final int BEDS_EACH = 2;
+	private static final int BEDS_EACH = 4;
+	/** At most this many come home to the town round a player each time it is looked at. */
+	private static final int AT_A_TIME = 3;
 	/** Nobody comes home to a bed this close to a player, in blocks: they'd appear before their eyes. */
 	private static final double UNSEEN = 20;
 	/** A villager that came this way goes once every player is this far away, in blocks. */
@@ -63,7 +66,8 @@ public final class Townsfolk {
 			return;
 		}
 		for (ServerPlayer player : players) {
-			comeHome(earth, field, player.blockPosition(), most, players);
+			for (int i = 0; i < AT_A_TIME && comeHome(earth, field, player.blockPosition(), most, players) != null; i++) {
+			}
 		}
 	}
 
