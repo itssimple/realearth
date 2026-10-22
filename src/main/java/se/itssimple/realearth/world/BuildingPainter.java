@@ -412,8 +412,9 @@ final class BuildingPainter {
 				top[oz * 16 + ox] = Math.max(top[oz * 16 + ox], floorY);
 				Interior.Room room = inside.roomAt(d.x() - DX[d.facing()], d.z() - DZ[d.facing()], 0);
 				int signY = floorY + 3;
+				// Not where a building next door stands: it is built over the sign, block entity and all.
 				if (room != null && room.name != null && (room.kind == Interior.Kind.SHOP || room.kind == Interior.Kind.HALLROOM)
-					&& chunk.getBlockState(pos.set(ox, signY, oz)).isAir()) {
+					&& t.building[k] == 0 && chunk.getBlockState(pos.set(ox, signY, oz)).isAir()) {
 					Signs.write(set(chunk, pos, ox, signY, oz, with(state(wallSign(p)), BlockStateProperties.HORIZONTAL_FACING, DIRS[d.facing()])), room.name);
 				}
 			}

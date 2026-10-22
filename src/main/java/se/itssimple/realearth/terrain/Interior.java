@@ -140,6 +140,8 @@ public final class Interior {
 	private static final int ROOM_MIN_SIDE = 2;
 	/** A house needs this many floor cells to give a stairwell room; smaller, it has a ladder. */
 	private static final int HOUSE_STAIRS_MIN = 50;
+	/** Longest hallway from a stairwell's landing out to its street door, in blocks. */
+	private static final int HALLWAY_MAX = 6;
 
 	private static final int[] DX = {0, 1, 0, -1};
 	private static final int[] DZ = {-1, 0, 1, 0};
@@ -462,7 +464,7 @@ public final class Interior {
 			addEntrance(d[0], d[1], d[2], 1);
 		}
 		int id = units++;
-		for (List<Integer> part : components(rest)) {
+		for (List<Integer> part : st != null ? roomy(components(rest)) : components(rest)) {
 			if (st != null && unitDoor(part) < 0 && !connectThroughWall(part) && plan.floors > 1) {
 				ladder(part);
 			}
@@ -489,7 +491,7 @@ public final class Interior {
 			}
 		}
 		int id = units++;
-		for (List<Integer> part : components(rest)) {
+		for (List<Integer> part : st != null ? roomy(components(rest)) : components(rest)) {
 			if (st != null ? unitDoor(part) < 0 && !connectThroughWall(part) : !touchesEntrance(part) && !connectThroughWall(part)) {
 				entranceFor(part, front, 1);
 				if (st != null && plan.floors > 1) {
@@ -564,25 +566,29 @@ public final class Interior {
 			int[][] frames = {
 				{-fx, -fz, -fz, fx}, {-fx, -fz, fz, -fx},
 				{-fz, fx, fx, fz}, {fz, -fx, fx, fz}};
+			int bestHall = 0;
 			for (int[] fr : frames) {
 				for (int c : region) {
 					int ox = x0 + c % w;
 					int oz = z0 + c / w;
 					Stairs st = new Stairs(ox, oz, fr[0], fr[1], fr[2], fr[3], a, b);
-					if (!fits(st, mine, fr == frames[0] || fr == frames[1], f)) {
+					int hall = fits(st, mine, fr == frames[0] || fr == frames[1], f);
+					if (hall < 0) {
 						continue;
 					}
 					double mx = st.x(a / 2 + 1, 1) - x0;
 					double mz = st.z(a / 2 + 1, 1) - z0;
-					double score = Math.hypot(mx - cx, mz - cz);
+					// Near the middle, and against the wall rather than down a hallway.
+					double score = Math.hypot(mx - cx, mz - cz) + 4 * hall;
 					if (score < bestScore) {
 						bestScore = score;
 						best = st;
+						bestHall = hall;
 					}
 				}
 			}
 			if (best != null) {
-				build(best, mine, best.rdx == -fx && best.rdz == -fz, entrance, f);
+				build(best, mine, best.rdx == -fx && best.rdz == -fz, entrance, f, bestHall);
 				return best;
 			}
 		}
@@ -591,40 +597,65 @@ public final class Interior {
 
 	/**
 	 * Whether a core fits: its cells in the region, its ring in the region or walls, and on its street side
-	 * the outer wall where the street door goes, with the street beyond it. The rest of that side may
-	 * stand a block in from a slanting wall: that block is walled in.
+	 * a way out to the street: its door in the outer wall, or where the wall slants away from the core, a
+	 * straight hallway of floor out to it. Returns the hallway's length (0 for a door in the core's own
+	 * wall), or -1 where it doesn't fit. Ring corners may be outside: a slanting wall cuts them off.
 	 */
-	private boolean fits(Stairs st, java.util.Set<Integer> mine, boolean rowFront, int f) {
+	private int fits(Stairs st, java.util.Set<Integer> mine, boolean rowFront, int f) {
 		int doorR = rowFront ? -1 : Math.max(1, (st.a + 1) / 2);
 		int doorS = rowFront ? 1 : 3;
 		for (int r = -1; r <= st.a + 2; r++) {
 			for (int s = -1; s <= 3; s++) {
 				int c = at(st.x(r, s), st.z(r, s));
 				boolean inner = r >= 0 && r <= st.a + 1 && s >= 0 && s <= 2;
+				boolean corner = (r == -1 || r == st.a + 2) && (s == -1 || s == 3);
 				if (c < 0) {
-					return false;
+					return -1;
 				}
 				byte v = code[1][c];
 				if (inner) {
 					if (!mine.contains(c) || v != ROOM) {
-						return false;
+						return -1;
 					}
-				} else {
-					if (r == doorR && s == doorS) {
-						int beyond = at(st.x(r, s) + DX[f], st.z(r, s) + DZ[f]);
-						if (v != SHELL || beyond < 0 || code[1][beyond] != OUT) {
-							return false;
-						}
-					} else if (!(mine.contains(c) && v == ROOM || v == SHELL || v == WALL)) {
-						return false;
-					}
+				} else if (!(r == doorR && s == doorS) && !(mine.contains(c) && v == ROOM || v == SHELL || v == WALL || corner && v == OUT)) {
+					return -1;
 				}
 			}
 		}
-		return true;
+		return hallway(st.x(doorR, doorS), st.z(doorR, doorS), f, mine);
 	}
 
-	private void build(Stairs st, java.util.Set<Integer> mine, boolean rowFront, boolean entrance, int f) {
+	/**
+	 * From a stairwell's door cell straight out toward f: the number of floor cells before the outer
+	 * wall, where the street door goes with the street beyond, or -1 where that is not within
+	 * HALLWAY_MAX. The hallway's sides have to be floor of the section (they are walled) or walls.
+	 */
+	private int hallway(int x, int z, int f, java.util.Set<Integer> mine) {
+		for (int k = 0; k <= HALLWAY_MAX; k++) {
+			int c = at(x + k * DX[f], z + k * DZ[f]);
+			if (c < 0) {
+				return -1;
+			}
+			byte v = code[1][c];
+			if (v == SHELL) {
+				int beyond = step(c, f);
+				return beyond >= 0 && code[1][beyond] == OUT ? k : -1;
+			}
+			if (!mine.contains(c) || v != ROOM) {
+				return -1;
+			}
+			for (int side : new int[] {(f + 1) % 4, (f + 3) % 4}) {
+				int n = step(c, side);
+				byte nv = n < 0 ? OUT : code[1][n];
+				if (!(mine.contains(n) && nv == ROOM || nv == SHELL || nv == WALL)) {
+					return -1;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private void build(Stairs st, java.util.Set<Integer> mine, boolean rowFront, boolean entrance, int f, int hall) {
 		stairs.add(st);
 		Room landing = newRoom(Kind.LANDING, -1);
 		for (int r = -1; r <= st.a + 2; r++) {
@@ -660,16 +691,57 @@ public final class Interior {
 				set(c, WALL);
 			}
 		}
+		int ex = rowFront ? st.x(-1, 1) : st.x(Math.max(1, (st.a + 1) / 2), 3);
+		int ez = rowFront ? st.z(-1, 1) : st.z(Math.max(1, (st.a + 1) / 2), 3);
+		// The hallway out to the street door, walled both sides: part of the landing, on every floor.
+		for (int k = 0; k < hall; k++) {
+			int c = at(ex + k * DX[f], ez + k * DZ[f]);
+			set(c, LANDING);
+			claim(landing, c, 3);
+			for (int side : new int[] {(f + 1) % 4, (f + 3) % 4}) {
+				int n = step(c, side);
+				if (n >= 0 && mine.contains(n) && code[1][n] == ROOM) {
+					set(n, WALL);
+				}
+			}
+		}
 		if (entrance) {
-			int ex = rowFront ? st.x(-1, 1) : st.x(Math.max(1, (st.a + 1) / 2), 3);
-			int ez = rowFront ? st.z(-1, 1) : st.z(Math.max(1, (st.a + 1) / 2), 3);
-			addEntrance(ex, ez, f, 1);
+			addEntrance(ex + hall * DX[f], ez + hall * DZ[f], f, 1);
 		}
 	}
 
 	/** The cells of a region not taken by a core or walls, as connected units. */
 	private List<List<Integer>> unitsAround(List<Integer> section, Stairs st, boolean divide) {
-		return components(available(section));
+		return roomy(components(available(section)));
+	}
+
+	/**
+	 * The pieces with room in them; the rest, slivers a stairwell left between itself and a slanting
+	 * wall, too narrow for a room or a door, are walled up.
+	 */
+	private List<List<Integer>> roomy(List<List<Integer>> parts) {
+		List<List<Integer>> out = new ArrayList<>();
+		for (List<Integer> part : parts) {
+			java.util.Set<Integer> mine = new java.util.HashSet<>(part);
+			boolean wide = false;
+			for (int c : part) {
+				int e = step(c, 1);
+				int s = step(c, 2);
+				int se = s < 0 ? -1 : step(s, 1);
+				if (e >= 0 && s >= 0 && se >= 0 && mine.contains(e) && mine.contains(s) && mine.contains(se)) {
+					wide = true;
+					break;
+				}
+			}
+			if (wide && part.size() >= ROOM_MIN) {
+				out.add(part);
+			} else {
+				for (int c : part) {
+					set(c, WALL);
+				}
+			}
+		}
+		return out;
 	}
 
 	private List<Integer> available(List<Integer> region) {
