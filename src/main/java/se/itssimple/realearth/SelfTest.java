@@ -524,6 +524,7 @@ final class SelfTest {
 			}
 		}
 		int total = 0;
+		boolean dumped = false;
 		for (var room : inside.rooms) {
 			if (room.kind == se.itssimple.realearth.terrain.Interior.Kind.LANDING) {
 				continue;
@@ -541,8 +542,64 @@ final class SelfTest {
 					total++;
 					if (!rooms.contains((long) room.id << 8 | f) && total - rooms.size() <= 3) {
 						log("    not reached: %s %d on floor %d; the floor:%n%s", room.kind, room.id, f, inside.sketch(f));
+						if (!dumped) {
+							dumped = true;
+							for (int dy = 1; dy <= 2; dy++) {
+								int y = y0 + f * plan.storey + dy;
+								StringBuilder built = new StringBuilder();
+								for (int z = inside.z0; z < inside.z0 + inside.h; z++) {
+									for (int x = inside.x0; x < inside.x0 + inside.w; x++) {
+										BlockState b = level.getBlockState(new BlockPos(x, y, z));
+										built.append(b.isAir() ? '.' : b.getBlock() instanceof net.minecraft.world.level.block.DoorBlock ? 'D'
+											: b.getBlock() instanceof net.minecraft.world.level.block.StairBlock ? 'S' : '#');
+									}
+									built.append('\n');
+								}
+								log("    built on floor %d at Y %d:%n%s", f, y, built);
+							}
+							int feet = y0 + f * plan.storey + 1;
+							StringBuilder walked = new StringBuilder();
+							for (int z = inside.z0; z < inside.z0 + inside.h; z++) {
+								for (int x = inside.x0; x < inside.x0 + inside.w; x++) {
+									walked.append(visited.contains(new BlockPos(x, feet, z).asLong()) ? 'o' : '.');
+								}
+								walked.append('\n');
+							}
+							log("    walked on floor %d at Y %d:%n%s", f, feet, walked);
+						}
 					}
 				}
+			}
+		}
+		if (rooms.isEmpty()) {
+			// The building as built, a block above its ground floor, beside its plan.
+			StringBuilder built = new StringBuilder();
+			for (int z = inside.z0; z < inside.z0 + inside.h; z++) {
+				for (int x = inside.x0; x < inside.x0 + inside.w; x++) {
+					BlockState b = level.getBlockState(new BlockPos(x, y0 + 1, z));
+					built.append(b.isAir() ? '.' : b.getBlock() instanceof net.minecraft.world.level.block.DoorBlock ? 'D' : '#');
+				}
+				built.append('\n');
+			}
+			log("    built at Y %d (floor Y %d, %d floors of %d):%n%s", y0 + 1, plan.floorY, plan.floors, plan.storey, built);
+			// What stands round the first street door: layers from the floor up, north at the top.
+			for (var d : inside.doors) {
+				if (!d.entrance()) {
+					continue;
+				}
+				log("    street door at %d,%d facing %d; around it from Y %d:", d.x(), d.z(), d.facing(), y0);
+				for (int y = y0; y <= y0 + 2; y++) {
+					StringBuilder rows = new StringBuilder();
+					for (int dz = -2; dz <= 2; dz++) {
+						for (int dx = -2; dx <= 2; dx++) {
+							BlockState b = level.getBlockState(new BlockPos(d.x() + dx, y, d.z() + dz));
+							rows.append(b.isAir() ? '.' : b.getBlock() instanceof net.minecraft.world.level.block.DoorBlock ? 'D' : '#');
+						}
+						rows.append(' ');
+					}
+					log("      Y %d: %s", y, rows);
+				}
+				break;
 			}
 		}
 		if (rooms.size() < total && !inside.stairs.isEmpty()) {
@@ -1072,6 +1129,34 @@ final class SelfTest {
 			check(bridges > 10 && steps * 1000 <= columns, "bridges are walkable: %d steps over %d columns", steps, columns);
 		}
 
+		// Place names: which town and district a position is in, from the map.
+		{
+			TerrainField field = RealEarth.terrain();
+			String[][] expect = {{"59.3150", "18.0720", "Stockholm", "Södermalm"}, {"59.3250", "18.0710", "Stockholm", "Gamla stan"},
+				{"67.5000", "20.3000", null, null}};
+			for (String[] e : expect) {
+				double lat = Double.parseDouble(e[0]);
+				double lon = Double.parseDouble(e[1]);
+				double bx = field.projection().blockX(lat, lon);
+				double bz = field.projection().blockZ(lat);
+				se.itssimple.realearth.world.Places.Here here = null;
+				for (int i = 0; i < 300 && here == null; i++) {
+					here = se.itssimple.realearth.world.Places.at(field, bx, bz);
+					if (here == null) {
+						try {
+							Thread.sleep(200);
+						} catch (InterruptedException ex) {
+							Thread.currentThread().interrupt();
+						}
+					}
+				}
+				var got = here;
+				log("place at %s, %s: %s", e[0], e[1], got);
+				check(got != null && java.util.Objects.equals(got.town(), e[2]) && java.util.Objects.equals(got.district(), e[3]),
+					"%s, %s is in %s, %s", e[0], e[1], e[3], e[2]);
+			}
+		}
+
 		// Buildings: central Stockholm, as planned and as built.
 		{
 			TerrainField field = RealEarth.terrain();
@@ -1285,27 +1370,55 @@ final class SelfTest {
 				int buildings = 0;
 				int reached = 0;
 				int total = 0;
-				java.util.Set<Long> seen = new java.util.HashSet<>();
-				for (int cx = bestCx - 6; cx <= bestCx + 6 && buildings < 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6 && buildings < 6; cz++) {
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						if (c == null) {
+				// The same buildings every run: all candidates in 13 x 13 chunks, in a fixed order.
+				java.util.Map<Long, se.itssimple.realearth.terrain.BuildingPlan> candidates = new java.util.TreeMap<>();
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						ChunkTerrain c;
+						try {
+							c = field.chunkBlocking(cx, cz, 120);
+						} catch (Exception e) {
 							continue;
 						}
 						for (var plan : c.plans) {
-							if (buildings >= 6 || !seen.add(plan.id) || plan.floors < 3 || plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.FLATS
-								&& plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.OFFICES
-								|| plan.maxX - plan.minX > 48 || plan.maxZ - plan.minZ > 48) {
-								continue;
+							if (plan.floors >= 3 && (plan.use == se.itssimple.realearth.terrain.BuildingPlan.Use.FLATS
+								|| plan.use == se.itssimple.realearth.terrain.BuildingPlan.Use.OFFICES)
+								&& plan.maxX - plan.minX <= 48 && plan.maxZ - plan.minZ <= 48) {
+								candidates.put(plan.id, plan);
 							}
-							int[] walk = walkRooms(earth, plan);
-							buildings++;
-							reached += walk[0];
-							total += walk[1];
-							log("  %d-storey flats at %d,%d: %d of %d rooms reached (%d stairwells, %d doors)", plan.floors, (int) plan.minX, (int) plan.minZ,
-								walk[0], walk[1], plan.interior().stairs.size(), plan.interior().doors.size());
 						}
 					}
+				}
+				for (var plan : candidates.values()) {
+					if (buildings >= 12) {
+						break;
+					}
+					// Only a building that stands on its whole footprint: where mapped buildings overlap,
+					// a column is the first one's, and the other is built in part or not at all.
+					int mine = 0;
+					int area = 0;
+					for (int x = (int) Math.floor(plan.minX); x <= (int) Math.ceil(plan.maxX); x++) {
+						for (int z = (int) Math.floor(plan.minZ); z <= (int) Math.ceil(plan.maxZ); z++) {
+							if (!plan.contains(x, z)) {
+								continue;
+							}
+							area++;
+							ChunkTerrain c = field.chunkIfReady(x >> 4, z >> 4);
+							int k = ChunkTerrain.index(x & 15, z & 15);
+							if (c != null && c.building[k] != 0 && c.plans.get(c.building[k] - 1).id == plan.id) {
+								mine++;
+							}
+						}
+					}
+					if (mine < area * 0.98) {
+						continue;
+					}
+					int[] walk = walkRooms(earth, plan);
+					buildings++;
+					reached += walk[0];
+					total += walk[1];
+					log("  %d-storey %s at %d,%d: %d of %d rooms reached (%d stairwells, %d doors)", plan.floors, plan.use, (int) plan.minX, (int) plan.minZ,
+						walk[0], walk[1], plan.interior().stairs.size(), plan.interior().doors.size());
 				}
 				log("rooms reached in %d blocks of flats and offices: %d of %d", buildings, reached, total);
 				check(buildings >= 2 && reached == total, "every room of the flats and offices can be walked to (%d of %d)", reached, total);

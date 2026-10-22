@@ -125,7 +125,10 @@ public class RealEarth implements ModInitializer {
 		Registry.register(BuiltInRegistries.STRUCTURE_PLACEMENT, id("built_up"), se.itssimple.realearth.world.BuiltUpPlacement.TYPE);
 
 		ServerLifecycleEvents.SERVER_STARTING.register(RealEarth::start);
-		ServerLifecycleEvents.SERVER_STOPPED.register(server -> stop());
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			stop();
+			se.itssimple.realearth.world.Places.clear();
+		});
 		CommandRegistrationCallback.EVENT.register((dispatcher, registries, environment) ->
 			EarthCommand.register(dispatcher, config.teleportPermissionLevel));
 		UseBlockCallback.EVENT.register(RealEarth::onUseBlock);
@@ -145,6 +148,7 @@ public class RealEarth implements ModInitializer {
 			if (server.getTickCount() % 1200 == 0) {
 				DegradedChunks.save();
 			}
+			se.itssimple.realearth.world.Places.tick(server);
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			if (isEarth(handler.player.level())) {

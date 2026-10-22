@@ -178,7 +178,7 @@ final class Buildings {
 			long id = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
 			Use use = classify(field, c, centre, area);
 			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), area, field, style(climate),
-				doors(c, lat), storeyMeters, maxFloors, use.use(), use.hall(), use.shops());
+				doors(c, lat), storeyMeters, maxFloors, use.use(), use.hall(), use.shops(), c.tileX(), c.tileY());
 			if (!t.degraded) {
 				PLANS.put(id, plan);
 			}

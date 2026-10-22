@@ -85,6 +85,8 @@ public final class EarthConfig {
 	 * between them. Where buildings are mapped, no villages are generated.
 	 */
 	public boolean useBuildings = true;
+	/** Show the town's name as a title on walking into it, and the district's above the hotbar, from the map's place names. */
+	public boolean placeTitles = true;
 	/** Height of each storey, in metres (at least 5 blocks). Storeys are counted from the real height at 3 m each. */
 	public double storeyMeters = 4.5;
 	/** Most storeys a building gets. */

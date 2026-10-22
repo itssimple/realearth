@@ -41,6 +41,10 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
 
 ## Towns, roads and railways
 
+- **Place names.** Walking into a town shows its name as a title, with the district under it (Södermalm,
+  Stockholm); walking on from one district into the next shows the new one above the hotbar. Names come from
+  the map's places: a city's name reaches some kilometres, a village's one or two.
+
 - **Real buildings.** Every building mapped in OpenStreetMap stands on its real footprint, built like a village
   house in the style of its climate: oak, cobblestone and brick in most of Europe, spruce in the north, snowy
   roofs in the far north, sandstone in deserts, acacia and terracotta in the tropics.
@@ -118,7 +122,7 @@ The frame and activator are tags, so a datapack can change them: `realearth:port
 
 | Command | |
 |---|---|
-| `/earth where` | Latitude, longitude and real elevation where you stand, with a clickable OpenStreetMap link |
+| `/earth where` | The town and district, latitude, longitude and real elevation where you stand, with a clickable OpenStreetMap link |
 | `/earth origin` | Which map this world uses, its scale, and the start point |
 | `/earth tp <lat> <lon>` | Go to a real place (permission level 2 by default; configurable) |
 | `/earth download <radius> [<lat> <lon>]` | Download an area's data in advance, around you or a place: elevation, map water, land cover, and the coarser data distant terrain uses. Up to 50 km radius / 20,000 elevation tiles. `/earth download cancel` stops it |
@@ -302,6 +306,7 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `useLandCover`, `landCoverUrl` | true, ESA S3 | Land cover from ESA WorldCover |
 | `useRoads`, `useRailways` | true, true | Roads, tracks and paths; railways and trams (need `useMapWater`'s map tiles) |
 | `useBuildings` | true | Build the map's buildings (and no villages where they are) |
+| `placeTitles` | true | Show a town's name on walking into it, and the district's above the hotbar |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
 | `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |

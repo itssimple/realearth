@@ -31,7 +31,9 @@ import se.itssimple.realearth.geo.Mercator;
  */
 public final class OsmWater {
 	public static final int ZOOM = 14;
-	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building", "poi", "landuse");
+	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building", "poi", "landuse", "place",
+		"transportation_name");
+	private static final Set<String> PLACE_LAYER = Set.of("place");
 
 	/** A water area: rings of interleaved x,y in global z15 sample coordinates. Even-odd filled. */
 	public record Area(List<double[]> rings, boolean sea) {
@@ -63,6 +65,17 @@ public final class OsmWater {
 	public record Poi(double x, double y, String cls, String subclass, String name, int level) {
 	}
 
+	/**
+	 * A named place: a city, town or village, or a district of one (suburb, quarter, neighbourhood), in
+	 * global z15 sample coordinates. Lower rank is more important.
+	 */
+	public record Place(double x, double y, String cls, String name, int rank) {
+	}
+
+	/** A named street or path: its centreline in global z15 sample coordinates, its name, and its class. */
+	public record Street(double[] points, String name, String cls, double minX, double minY, double maxX, double maxY) {
+	}
+
 	/** What land is used for (residential, commercial, industrial, school...): rings like an Area's, and its box. */
 	public record Land(List<double[]> rings, String cls, double minX, double minY, double maxX, double maxY) {
 	}
@@ -72,11 +85,11 @@ public final class OsmWater {
 	 * false when the map has no tile or could not be fetched.
 	 */
 	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings, List<Poi> pois,
-		List<Land> landuse) {
+		List<Land> landuse, List<Place> places, List<Street> streets) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
-		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of());
+		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
-		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of());
+		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -199,6 +212,8 @@ public final class OsmWater {
 		List<Building> buildings = new ArrayList<>();
 		List<Poi> pois = new ArrayList<>();
 		List<Land> landuse = new ArrayList<>();
+		List<Place> places = new ArrayList<>();
+		List<Street> streets = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
 			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
 				continue;
@@ -235,6 +250,29 @@ public final class OsmWater {
 				}
 				if (current != null) {
 					addBuilding(buildings, current, f.number("render_height"));
+				}
+				continue;
+			}
+			if (f.layer().equals("place") && f.type() == VectorTile.POINT) {
+				addPlaces(places, f, parts);
+				continue;
+			}
+			if (f.layer().equals("transportation_name") && f.type() == VectorTile.LINE && f.string("name") != null) {
+				for (double[] part : parts) {
+					if (part.length < 4) {
+						continue;
+					}
+					double minX = Double.MAX_VALUE;
+					double minY = Double.MAX_VALUE;
+					double maxX = -Double.MAX_VALUE;
+					double maxY = -Double.MAX_VALUE;
+					for (int i = 0; i < part.length; i += 2) {
+						minX = Math.min(minX, part[i]);
+						maxX = Math.max(maxX, part[i]);
+						minY = Math.min(minY, part[i + 1]);
+						maxY = Math.max(maxY, part[i + 1]);
+					}
+					streets.add(new Street(part, f.string("name"), cls, minX, minY, maxX, maxY));
 				}
 				continue;
 			}
@@ -303,7 +341,83 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true, ways, buildings, pois, landuse);
+		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets);
+	}
+
+	/** Cities, towns, villages and their districts; not islands, countries, states or lone farms. */
+	private static void addPlaces(List<Place> places, VectorTile.Feature f, List<double[]> parts) {
+		String cls = f.string("class");
+		String name = f.string("name");
+		if (name == null || cls == null) {
+			return;
+		}
+		switch (cls) {
+			case "city", "town", "village", "hamlet", "suburb", "quarter", "neighbourhood" -> {
+				double rank = f.number("rank");
+				for (double[] p : parts) {
+					places.add(new Place(p[0], p[1], cls, name, Double.isNaN(rank) ? 99 : (int) rank));
+				}
+			}
+			default -> {
+			}
+		}
+	}
+
+	private final Map<Long, CompletableFuture<List<Place>>> placeCache = new LinkedHashMap<>(64, 0.75f, true) {
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<Long, CompletableFuture<List<Place>>> eldest) {
+			return size() > 64;
+		}
+	};
+
+	/**
+	 * The named places in a tile at any zoom up to 14. A low zoom tile covers a wide area and keeps only
+	 * its bigger places, cities and towns: that is how far a town's name reaches. At 14, the tile's own.
+	 */
+	public CompletableFuture<List<Place>> places(int zoom, int x, int y) {
+		if (zoom >= ZOOM) {
+			return tile(x, y).thenApply(Shapes::places);
+		}
+		int n = 1 << zoom;
+		int wx = Math.floorMod(x, n);
+		int wy = Math.max(0, Math.min(n - 1, y));
+		long key = (long) zoom << 56 | (long) wx << 28 | wy;
+		synchronized (placeCache) {
+			return placeCache.computeIfAbsent(key, k -> CompletableFuture.supplyAsync(() -> loadPlaces(zoom, wx, wy), downloads));
+		}
+	}
+
+	private List<Place> loadPlaces(int zoom, int x, int y) {
+		Path file = root.resolve(Integer.toString(zoom)).resolve(Integer.toString(x)).resolve(y + ".pbf");
+		try {
+			byte[] data = Http.readCache(file);
+			if (data == null) {
+				String url = template().replace("{z}", Integer.toString(zoom)).replace("{x}", Integer.toString(x)).replace("{y}", Integer.toString(y));
+				data = Http.get(url, 0, 0);
+				Http.writeCache(file, data);
+			}
+			double samplesPerTile = (double) Mercator.TILE_SIZE * (1 << (Mercator.ZOOM - zoom));
+			List<Place> places = new ArrayList<>();
+			for (VectorTile.Feature f : VectorTile.decode(data, PLACE_LAYER)) {
+				if (f.type() != VectorTile.POINT) {
+					continue;
+				}
+				double scale = samplesPerTile / f.extent();
+				List<double[]> parts = new ArrayList<>();
+				for (int[] p : f.parts()) {
+					parts.add(new double[] {x * samplesPerTile + p[0] * scale - 0.5, y * samplesPerTile + p[1] * scale - 0.5});
+				}
+				addPlaces(places, f, parts);
+			}
+			return places;
+		} catch (Http.Missing e) {
+			return List.of();
+		} catch (IOException | RuntimeException e) {
+			synchronized (placeCache) {
+				placeCache.remove((long) zoom << 56 | (long) x << 28 | y);
+			}
+			return List.of();
+		}
 	}
 
 	private static void addBuilding(List<Building> buildings, List<double[]> rings, double height) {

@@ -67,9 +67,17 @@ public final class BuildingPlan {
 	/** Shops in ground-floor units (flats and offices only). */
 	public final List<Shop> shops;
 	private volatile Interior interior;
+	/**
+	 * The map tile this copy of the building is from. A building across a tile edge comes once in each
+	 * tile, each copy claiming the columns of its own tile only (see Buildings.plan): this one is
+	 * those columns and no more.
+	 */
+	private final se.itssimple.realearth.geo.Projection projection;
+	private final int tileX;
+	private final int tileY;
 
 	BuildingPlan(long id, List<double[]> rings, int floorY, int floors, int storey, int roofRise, Style style, int palette, List<int[]> doors,
-		Use use, Trade hall, List<Shop> shops) {
+		Use use, Trade hall, List<Shop> shops, se.itssimple.realearth.geo.Projection projection, int tileX, int tileY) {
 		this.id = id;
 		this.rings = rings;
 		double x0 = Double.MAX_VALUE;
@@ -98,6 +106,9 @@ public final class BuildingPlan {
 		this.use = use;
 		this.hall = hall;
 		this.shops = shops;
+		this.projection = projection;
+		this.tileX = tileX;
+		this.tileY = tileY;
 	}
 
 	/** The building's rooms, stairs and doors, worked out the first time they are asked for. */
@@ -140,9 +151,22 @@ public final class BuildingPlan {
 		return floorY + floors * storey;
 	}
 
-	/** Even-odd test of a block column's centre. */
+	/** Whether a block column is this building's: its centre inside the footprint, and in this copy's map tile. */
 	public boolean contains(int x, int z) {
-		return contains(rings, x + 0.5, z + 0.5);
+		return contains(rings, x + 0.5, z + 0.5) && ownTile(x, z);
+	}
+
+	/** The map tile a column is in, worked out as the terrain does for the column's own samples. */
+	private boolean ownTile(int x, int z) {
+		if (projection == null) {
+			return true;
+		}
+		double lat = projection.latitudeAt(z + 0.5);
+		double lon = se.itssimple.realearth.geo.Projection.wrapLongitude(projection.originLongitude() + projection.longitudeOffsetAt(x + 0.5, lat));
+		double perTile = se.itssimple.realearth.geo.Mercator.TILE_SIZE * (double) (1 << (se.itssimple.realearth.geo.Mercator.ZOOM - OsmWater.ZOOM));
+		int tx = Math.floorMod((int) Math.floor((se.itssimple.realearth.geo.Mercator.sampleX(lon) + 0.5) / perTile), 1 << OsmWater.ZOOM);
+		int ty = (int) Math.floor((se.itssimple.realearth.geo.Mercator.sampleY(lat) + 0.5) / perTile);
+		return tx == tileX && ty == tileY;
 	}
 
 	static boolean contains(List<double[]> rings, double px, double pz) {
@@ -195,7 +219,7 @@ public final class BuildingPlan {
 
 	/** Builds plans for a map tile's building, or null when it can't stand (too small, in the water). */
 	static BuildingPlan of(long id, List<double[]> rings, double floorMeters, double latitude, double heightMeters, double area,
-		TerrainField field, Style style, List<int[]> doors, double storeyMeters, int maxFloors, Use use, Trade hall, List<Shop> shops) {
+		TerrainField field, Style style, List<int[]> doors, double storeyMeters, int maxFloors, Use use, Trade hall, List<Shop> shops, int tileX, int tileY) {
 		double perMeter = field.projection().blocksPerMeter(latitude);
 		int storey = Math.max(5, (int) Math.ceil(storeyMeters * perMeter));
 		double realHeight = !Double.isNaN(heightMeters) && heightMeters > 0 ? heightMeters : area < 40 ? 3 : 6;
@@ -217,7 +241,7 @@ public final class BuildingPlan {
 		boolean pitched = style != Style.DESERT && floors <= 6 && halfDepth <= 15 && halfDepth >= 2;
 		int rise = pitched ? (int) Math.max(2, Math.min(8, Math.floor(halfDepth))) : 0;
 		int palette = (int) ((id >>> 7) & 0xFF);
-		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, doors, use, hall, shops);
+		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, doors, use, hall, shops, field.projection(), tileX, tileY);
 	}
 
 	/** The farthest any point inside the footprint is from its edge, in blocks: half the depth of its widest wing. */

@@ -230,7 +230,10 @@ public final class EarthCommand {
 		double elevation = field.toElevation(p.y, lat);
 		double metersPerBlock = 1.0 / field.projection().blocksPerMeter(lat);
 		String scale = Math.abs(metersPerBlock - 1.0) < 0.005 ? "" : String.format(Locale.ROOT, ", 1 block = %.2f m here", metersPerBlock);
-		source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "%.5f, %.5f  -  %.0f m above sea level%s ", lat, lon, elevation, scale))
+		var here = se.itssimple.realearth.world.Places.at(field, p.x, p.z);
+		String place = here == null || here.town() == null && here.district() == null ? ""
+			: (here.district() == null ? here.town() : here.town() == null ? here.district() : here.district() + ", " + here.town()) + "  -  ";
+		source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "%s%.5f, %.5f  -  %.0f m above sea level%s ", place, lat, lon, elevation, scale))
 			.append(mapLink(lat, lon)), false);
 		return 1;
 	}

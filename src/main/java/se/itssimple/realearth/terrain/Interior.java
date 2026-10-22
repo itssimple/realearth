@@ -376,6 +376,9 @@ public final class Interior {
 			case WAREHOUSE -> in.hall(floor, front, Integer.MAX_VALUE);
 			case HOUSE -> in.house(floor, front);
 		}
+		if (p.use != BuildingPlan.Use.FLATS && p.use != BuildingPlan.Use.OFFICES) {
+			in.connectAll(front);
+		}
 		return in;
 	}
 
@@ -443,6 +446,7 @@ public final class Interior {
 			}
 		}
 		shops(allUnits, ids, front);
+		connectAll(front);
 	}
 
 	/** A hall: one open room a floor (or classrooms), a stairwell when there are floors above. */
@@ -786,6 +790,12 @@ public final class Interior {
 		if (c < 0 || doorAt.containsKey(cellKey(x, z))) {
 			return;
 		}
+		// Only in the outer wall, with the street the other side: a planned door can fall where this
+		// copy of the building doesn't reach, or inside it.
+		int beyond = at(x + DX[facing], z + DZ[facing]);
+		if (code[1][c] != SHELL || beyond < 0 || code[1][beyond] != OUT) {
+			return;
+		}
 		Door d = new Door(x, z, facing, layers, true);
 		doors.add(d);
 		doorAt.put(cellKey(x, z), d);
@@ -966,6 +976,127 @@ public final class Interior {
 
 	private boolean isFloor(int c) {
 		return c >= 0 && code[1][c] == ROOM;
+	}
+
+	/**
+	 * Makes every room reachable. Flood from the landings (which the stairs join floor to floor) and,
+	 * on the ground floor, from the street doors, through every door; a part not reached gets a door
+	 * through its wall into a reached room, until all are joined. A part with no reached neighbour at
+	 * all gets a street door, and a ladder up to its floors above.
+	 */
+	private void connectAll(int front) {
+		for (int layer = 1; layer >= 0; layer--) {
+			for (int guard = 0; guard < 64; guard++) {
+				boolean[] reached = reachedCells(layer);
+				List<Integer> left = new ArrayList<>();
+				for (int c = 0; c < w * h; c++) {
+					if (!reached[c] && (code[layer][c] == ROOM || code[layer][c] == LANDING)) {
+						left.add(c);
+					}
+				}
+				if (left.isEmpty()) {
+					break;
+				}
+				boolean joined = false;
+				for (List<Integer> part : components(left)) {
+					if (joinToReached(part, layer, reached)) {
+						joined = true;
+						break; // flood again: what it opened onto may reach more
+					}
+				}
+				if (!joined) {
+					// Nothing reached next door: in from the street, and up by ladder.
+					List<Integer> part = components(left).get(0);
+					int before = doors.size();
+					entranceFor(part, front, 1);
+					if (plan.floors > 1) {
+						ladder(part);
+					}
+					if (doors.size() == before) {
+						break; // no outer wall to put a door in: leave it
+					}
+				}
+			}
+		}
+	}
+
+	/** The floor cells of a layer reachable from its landings (and, on the ground floor, its street doors). */
+	private boolean[] reachedCells(int layer) {
+		int floor = layer == 0 ? 0 : 1;
+		boolean[] seen = new boolean[w * h];
+		ArrayDeque<Integer> queue = new ArrayDeque<>();
+		for (int c = 0; c < w * h; c++) {
+			if (code[layer][c] == LANDING || ladders.containsKey(c) && layer == 1) {
+				seen[c] = true;
+				queue.add(c);
+			}
+		}
+		if (layer == 0) {
+			for (Door d : doors) {
+				if (d.entrance && d.on(0)) {
+					int c = at(d.x, d.z);
+					int in = c < 0 ? -1 : step(c, (d.facing + 2) % 4);
+					if (in >= 0 && !seen[in]) {
+						seen[in] = true;
+						queue.add(in);
+					}
+				}
+			}
+		}
+		while (!queue.isEmpty()) {
+			int c = queue.poll();
+			for (int d = 0; d < 4; d++) {
+				int n = step(c, d);
+				if (n < 0 || seen[n]) {
+					continue;
+				}
+				byte v = code[layer][n];
+				if (v == ROOM || v == LANDING) {
+					seen[n] = true;
+					queue.add(n);
+				} else if (v == WALL && doorAt(x0 + n % w, z0 + n / w, floor) != null) {
+					// Through the door to the other side.
+					int beyond = step(n, d);
+					if (beyond >= 0 && !seen[beyond] && (code[layer][beyond] == ROOM || code[layer][beyond] == LANDING)) {
+						seen[n] = true;
+						seen[beyond] = true;
+						queue.add(beyond);
+					}
+				}
+			}
+		}
+		return seen;
+	}
+
+	/** A door from a part not reached into a reached room or landing, through a wall between; true when made. */
+	private boolean joinToReached(List<Integer> part, int layer, boolean[] reached) {
+		int fallback = -1;
+		int fallbackDir = 0;
+		for (int c : part) {
+			for (int d = 0; d < 4; d++) {
+				int wall = step(c, d);
+				int beyond = wall < 0 ? -1 : step(wall, d);
+				if (beyond < 0 || code[layer][wall] != WALL || !reached[beyond] || code[layer][beyond] != ROOM && code[layer][beyond] != LANDING) {
+					continue;
+				}
+				if (doorAt.containsKey(cellKey(x0 + wall % w, z0 + wall / w))) {
+					continue;
+				}
+				if (framed(wall, d)) {
+					addDoor(wall, d, layer == 1 ? 3 : 1, false);
+					return true;
+				}
+				if (fallback < 0) {
+					fallback = wall;
+					fallbackDir = d;
+				}
+			}
+		}
+		if (fallback >= 0) {
+			addDoor(fallback, fallbackDir, layer == 1 ? 3 : 1, false);
+			return true;
+		}
+		return false;
 	}
 
 	/** Shops: each takes the ground floor of the unit nearest its point, as one room with its own street door. */
@@ -1232,6 +1363,8 @@ public final class Interior {
 			}
 		}
 		java.util.Set<Integer> used = new java.util.HashSet<>();
+		// Cells something stands in that you can't walk or step over; none may cut the room in two.
+		java.util.Set<Integer> blocked = new java.util.HashSet<>();
 		boolean stocked = false;
 		for (Item item : want) {
 			for (int[] spot : wallSpots) {
@@ -1240,13 +1373,24 @@ public final class Interior {
 					continue;
 				}
 				int away = (spot[1] + 2) % 4;
+				int foot = item == Item.BED ? step(c, away) : -1;
 				if (item == Item.BED) {
 					// The foot is the next cell out from the wall: free floor of the same room.
-					int foot = step(c, away);
 					if (foot < 0 || used.contains(foot) || roomOf[layer][foot] != room.id || code[layer][foot] != ROOM
 						|| nearDoor(x0 + foot % w, z0 + foot / w, floor)) {
 						continue;
 					}
+				}
+				if (blocks(item) && !keepsWay(room, layer, blocked, c, foot)) {
+					continue;
+				}
+				if (blocks(item)) {
+					blocked.add(c);
+					if (foot >= 0) {
+						blocked.add(foot);
+					}
+				}
+				if (item == Item.BED) {
 					used.add(foot);
 					out.put(foot, new Placed(Item.BED, spot[1], -1 - plan.hash(c, floor, 7, 34)));
 				}
@@ -1267,7 +1411,8 @@ public final class Interior {
 		};
 		if (centre == Item.TABLE && !middle.isEmpty()) {
 			int c = middle.get(0);
-			if (!used.contains(c)) {
+			if (!used.contains(c) && keepsWay(room, layer, blocked, c, -1)) {
+				blocked.add(c);
 				out.put(c, new Placed(Item.TABLE, 0, roll));
 			}
 		} else if (centre == Item.RUG) {
@@ -1296,10 +1441,55 @@ public final class Interior {
 					case SCHOOL, OFFICE, FOOD -> Item.TABLE;
 					default -> room.kind == Kind.HALLROOM && room.trade == null ? Item.CRATE : Item.STOCK;
 				};
+				if (blocks(it)) {
+					if (!keepsWay(room, layer, blocked, c, -1)) {
+						continue;
+					}
+					blocked.add(c);
+				}
 				out.put(c, new Placed(it, plan.doors.isEmpty() ? 2 : plan.doors.get(0)[2], plan.hash(c, floor, 9, 35)));
 			}
 		}
 		return out;
+	}
+
+	/**
+	 * Whether a thing stops you walking, so it must not stand in the way: everything but rugs, flower
+	 * pots and pews (you step over those). Beds count, the made-up ones being a full block high.
+	 */
+	private static boolean blocks(Item item) {
+		return item != Item.RUG && item != Item.FLOWER && item != Item.PEW;
+	}
+
+	/** Whether the room's free floor stays in one piece with cells a and b taken too (b may be -1). */
+	private boolean keepsWay(Room room, int layer, java.util.Set<Integer> blocked, int a, int b) {
+		int free = 0;
+		int start = -1;
+		for (int c : room.cells) {
+			if (roomOf[layer][c] == room.id && c != a && c != b && !blocked.contains(c) && (code[layer][c] == ROOM || code[layer][c] == LANDING)) {
+				free++;
+				start = start < 0 ? c : start;
+			}
+		}
+		if (start < 0) {
+			return false;
+		}
+		java.util.Set<Integer> seen = new java.util.HashSet<>();
+		ArrayDeque<Integer> queue = new ArrayDeque<>();
+		seen.add(start);
+		queue.add(start);
+		while (!queue.isEmpty()) {
+			int c = queue.poll();
+			for (int d = 0; d < 4; d++) {
+				int n = step(c, d);
+				if (n >= 0 && n != a && n != b && !blocked.contains(n) && roomOf[layer][n] == room.id && !seen.contains(n)
+					&& (code[layer][n] == ROOM || code[layer][n] == LANDING)) {
+					seen.add(n);
+					queue.add(n);
+				}
+			}
+		}
+		return seen.size() == free;
 	}
 
 	/** A middle cell whose neighbours are all floor of the same room: a row there leaves the way past it free. */
