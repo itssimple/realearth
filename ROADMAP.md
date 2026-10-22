@@ -42,6 +42,10 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 
 ## Known issues
 
+- **Humps under city bridges.** Where the elevation is a surface model (central Stockholm), a bridge is
+  part of the "ground", so a street passing under it is measured at the bridge's height and the deck is
+  lifted to clear it. A bare-earth model (feature 2) fixes it. A few steps of two blocks also remain where a
+  ramp forks off a deck and climbs beside it, and between twin decks over water.
 - **Doors you can walk round.** Some buildings get a door with no wall block beside it, so the door
   can be bypassed.
 - **LOD land-cover patches.** Seen from high up, sparse forest (e.g. the Kaibab plateau by the Grand Canyon) shows

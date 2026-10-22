@@ -17,12 +17,16 @@ import se.itssimple.realearth.osm.Ways;
  * few metres, where the road simply follows the ground. Railway tracks are traced block by block, so
  * they form one continuous line of rails, on a bed of ballast.
  *
- * Bridges get a deck at the height interpolated between the bridge's two ends, wherever they cross
- * water or a valley. Tunnels are not drawn at all: they are inside the ground.
+ * Bridges are laid on their run's deck (see {@link Bridges}): a deck where it stands a few blocks clear
+ * of what is under it, and nearer the ground a road at the deck's own height, on filled ground, so a
+ * bridge has no step where it leaves the ground. Roads meeting a deck end held above the ground ramp
+ * up to it. Tunnels are not drawn at all: they are inside the ground.
  */
 final class WayRaster {
 	/** Most a road levels the ground, up or down. Steeper than this it follows the slope. */
 	private static final double MAX_LEVELLING_METERS = 3.0;
+	/** A bridge column is a deck from this many blocks above the ground; lower, a road on filled ground. */
+	private static final double DECK_MIN_BLOCKS = 3;
 	/** Half the width of a railway's ballast bed. */
 	private static final double RAIL_BED_HALF_METERS = 1.75;
 
@@ -30,7 +34,7 @@ final class WayRaster {
 	}
 
 	static void apply(TerrainField field, ChunkTerrain t, Map<Long, ProcessedTile> tiles, double[] sx, double[] sy, boolean[] onGlobe,
-		List<OsmWater.Way> ways, int chunkX, int chunkZ, boolean roads, boolean rails) {
+		List<OsmWater.Way> ways, Bridges.Network bridges, int chunkX, int chunkZ, boolean roads, boolean rails) {
 		int n = ChunkTerrain.SPAN;
 		int centre = ChunkTerrain.index(8, 8);
 		double minSX = Double.MAX_VALUE;
@@ -53,6 +57,8 @@ final class WayRaster {
 		double perMeter = field.projection().blocksPerMeter(lat);
 
 		double[] target = new double[n * n];
+		// Where the target may fill the ground further than levelling would: under a bridge or a ramp.
+		boolean[] raised = new boolean[n * n];
 		double[] deck = new double[n * n];
 		Arrays.fill(target, Double.NaN);
 		Arrays.fill(deck, Double.NaN);
@@ -70,15 +76,13 @@ final class WayRaster {
 				continue;
 			}
 			byte kind = rail ? Ways.RAIL_BED : way.kind();
-			double startHeight = Double.NaN;
-			double endHeight = Double.NaN;
-			if (way.bridge()) {
-				double[] p = way.points();
-				startHeight = TerrainField.splineHeight(tiles, p[0], p[1]);
-				endHeight = TerrainField.splineHeight(tiles, p[p.length - 2], p[p.length - 1]);
-			}
+			Bridges.Run run = way.bridge() ? bridges.runOf.get(way) : null;
+			double[] wp = way.points();
+			double rampStart = way.bridge() ? Double.NaN : bridges.anchors.getOrDefault(Bridges.node(wp[0], wp[1]), Double.NaN);
+			double rampEnd = way.bridge() ? Double.NaN : bridges.anchors.getOrDefault(Bridges.node(wp[wp.length - 2], wp[wp.length - 1]), Double.NaN);
 			for (int k = 0; k < n * n; k++) {
-				if (!onGlobe[k] || kind < t.way[k] && Double.isNaN(deck[k])) {
+				// A deck competes with decks only: the way on the ground beneath it is no reason to leave a hole.
+				if (!onGlobe[k] || (way.bridge() ? kind < t.deckWay[k] : kind < t.way[k] && Double.isNaN(deck[k]))) {
 					continue;
 				}
 				nearest(way.points(), sx[k], sy[k], near);
@@ -86,20 +90,42 @@ final class WayRaster {
 					continue;
 				}
 				double h = TerrainField.splineHeight(tiles, near[1], near[2]);
+				boolean lifted = false;
 				if (way.bridge()) {
-					double along = near[4] > 0 ? near[3] / near[4] : 0;
-					double d = !Double.isNaN(startHeight) && !Double.isNaN(endHeight) ? startHeight + (endHeight - startHeight) * along : h;
-					if (!Double.isNaN(d) && (!Float.isNaN(t.waterMeters[k]) || d > t.groundMeters[k] + 2)) {
-						if (kind >= t.deckWay[k]) {
-							deck[k] = d;
-							t.deckWay[k] = kind;
-						}
+					double d = run == null ? Double.NaN : run.heightOnWay(way, near[3], near[4]);
+					// Past the run's own ends the bridge stops: what lies beyond is the road it joins,
+					// ramping on from there, not a cap of deck sticking out at the deck's height.
+					double s = run == null ? Double.NaN : run.positionOnWay(way, near[3], near[4]);
+					if (!Double.isNaN(s) && (s <= 1e-6 || s >= run.length() - 1e-6) && Float.isNaN(t.waterMeters[k])) {
 						continue;
 					}
+					if (!Double.isNaN(d)) {
+						if (!Float.isNaN(t.waterMeters[k]) || (d - t.groundMeters[k]) * perMeter >= DECK_MIN_BLOCKS) {
+							if (kind >= t.deckWay[k]) {
+								deck[k] = d;
+								t.deckWay[k] = kind;
+							}
+							continue;
+						}
+						h = d;
+						lifted = true;
+					}
+				} else if (!Double.isNaN(rampStart) || !Double.isNaN(rampEnd)) {
+					double fromStart = near[3] * spacing;
+					double fromEnd = (near[4] - near[3]) * spacing;
+					double cone = Math.max(Double.isNaN(rampStart) ? Double.NEGATIVE_INFINITY : rampStart - Bridges.GRADIENT * fromStart,
+						Double.isNaN(rampEnd) ? Double.NEGATIVE_INFINITY : rampEnd - Bridges.GRADIENT * fromEnd);
+					if (cone > h) {
+						h = cone;
+						lifted = true;
+					}
 				}
-				if (kind >= t.way[k]) {
+				// The higher kind wins; between two of a kind, the higher surface, so a ramp isn't buried
+				// by the street it joins.
+				if (kind > t.way[k] || kind == t.way[k] && !(h <= target[k])) {
 					t.way[k] = kind;
 					target[k] = h;
+					raised[k] = lifted;
 				}
 			}
 			if (rail) {
@@ -108,17 +134,38 @@ final class WayRaster {
 		}
 
 		for (int k = 0; k < n * n; k++) {
+			// A deck and a way on the ground in one column, too close for one to pass under the other, are
+			// the same surface -- a twin carriageway, or an approach overlapping its bridge's end: one
+			// road, at the deck's height.
+			if (!Double.isNaN(deck[k]) && t.way[k] != Ways.NONE && !Double.isNaN(target[k]) && Float.isNaN(t.waterMeters[k])
+				&& (deck[k] - target[k]) * perMeter < DECK_MIN_BLOCKS) {
+				target[k] = Math.max(deck[k], target[k]);
+				raised[k] = true;
+				t.way[k] = (byte) Math.max(t.way[k], t.deckWay[k]);
+				t.deckWay[k] = Ways.NONE;
+				deck[k] = Double.NaN;
+			}
 			if (!Double.isNaN(deck[k])) {
 				t.deckMeters[k] = (float) deck[k];
 			}
 			if (t.way[k] == Ways.NONE) {
 				continue;
 			}
-			if (!Float.isNaN(t.waterMeters[k])) {
-				t.way[k] = Ways.NONE; // no roads through water, only over it
+			if (!Float.isNaN(t.waterMeters[k]) && !Double.isNaN(deck[k])) {
+				t.way[k] = Ways.NONE; // under a deck, over water: the deck is the road
 				continue;
 			}
-			if (!Double.isNaN(target[k]) && Math.abs(target[k] - t.groundMeters[k]) <= MAX_LEVELLING_METERS) {
+			if (!Float.isNaN(t.waterMeters[k])) {
+				// A way the map draws across the water's edge without calling it a bridge -- a quay, a
+				// causeway, an abutment the water polygon overlaps -- is built up out of the water, so
+				// the road doesn't break off at the shore.
+				double causeway = Math.max(Double.isNaN(target[k]) ? t.waterMeters[k] : target[k], t.waterMeters[k] + 1 / perMeter);
+				t.groundMeters[k] = (float) causeway;
+				t.waterMeters[k] = Float.NaN;
+				t.lake[k] = false;
+				continue;
+			}
+			if (!Double.isNaN(target[k]) && (raised[k] && target[k] >= t.groundMeters[k] || Math.abs(target[k] - t.groundMeters[k]) <= MAX_LEVELLING_METERS)) {
 				t.groundMeters[k] = (float) target[k];
 			}
 		}

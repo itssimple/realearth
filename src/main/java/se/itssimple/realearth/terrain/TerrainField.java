@@ -401,7 +401,9 @@ public final class TerrainField implements AutoCloseable {
 		List<CompletableFuture<OsmWater.Shapes>> wayTiles = new ArrayList<>();
 		List<int[]> wayTileCoords = new ArrayList<>();
 		if (map != null && (config.useRoads || config.useRailways || config.useBuildings) && minX <= maxX && maxX - minX <= 4L * Mercator.TILE_SIZE) {
-			for (int[] w : OsmWater.tilesCovering(minX - 4, minY - 4, maxX + 4, maxY + 4)) {
+			// Bridges within reach of the chunk too, for their ramps.
+			int reach = config.useRoads || config.useRailways ? BRIDGE_REACH_SAMPLES : 4;
+			for (int[] w : OsmWater.tilesCovering(minX - reach, minY - reach, maxX + reach, maxY + reach)) {
 				wayTiles.add(map.tile(w[0], w[1]));
 				wayTileCoords.add(new int[] {Math.floorMod(w[0], 1 << OsmWater.ZOOM), w[1]});
 			}
@@ -444,6 +446,21 @@ public final class TerrainField implements AutoCloseable {
 				: List.of();
 			se.itssimple.realearth.Perf.stop("terrain.buildings.near", nearing);
 			Map<Long, CompletableFuture<ProcessedTile>> withBuildings = new HashMap<>(needed);
+			// Bridges are laid as whole runs, and ramps reach a little way out from their ends: the
+			// elevation along every run within reach of the chunk.
+			List<Bridges.Run> runs = List.of();
+			if (config.useRoads || config.useRailways) {
+				List<OsmWater.Way> mapWays = new ArrayList<>();
+				shapes.forEach(s -> mapWays.addAll(s.ways()));
+				runs = Bridges.runs(mapWays);
+				for (Bridges.Run r : runs) {
+					if (nearChunk(r, chunkMinX, chunkMinY, chunkMaxX, chunkMaxY)) {
+						addTiles(withBuildings, (long) Math.floor(r.minX) - BRIDGE_REACH_SAMPLES, (long) Math.floor(r.maxX) + BRIDGE_REACH_SAMPLES,
+							(long) Math.floor(r.minY) - BRIDGE_REACH_SAMPLES, (long) Math.floor(r.maxY) + BRIDGE_REACH_SAMPLES);
+					}
+				}
+			}
+			List<Bridges.Run> chunkRuns = runs;
 			for (Buildings.Candidate c : candidates) {
 				if (c.planned()) {
 					continue;
@@ -456,7 +473,7 @@ public final class TerrainField implements AutoCloseable {
 				Map<Long, ProcessedTile> all2 = new HashMap<>();
 				withBuildings.forEach((key, f) -> all2.put(key, f.join()));
 				long started = se.itssimple.realearth.Perf.start();
-				ChunkTerrain built = build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, sx, sy, onGlobe, chunkX, chunkZ);
+				ChunkTerrain built = build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, chunkRuns, sx, sy, onGlobe, chunkX, chunkZ);
 				se.itssimple.realearth.Perf.stop("terrain", started);
 				return built;
 			}, workers);
@@ -465,7 +482,8 @@ public final class TerrainField implements AutoCloseable {
 
 	/** The chunk's terrain from everything fetched for it. */
 	private ChunkTerrain build(ChunkTerrain terrain, Map<Long, ProcessedTile> tiles, java.util.Set<Long> own, WorldCover.Lookup landCover,
-		List<OsmWater.Shapes> shapes, List<Buildings.Candidate> candidates, double[] sx, double[] sy, boolean[] onGlobe, int chunkX, int chunkZ) {
+		List<OsmWater.Shapes> shapes, List<Buildings.Candidate> candidates, List<Bridges.Run> runs, double[] sx, double[] sy, boolean[] onGlobe,
+		int chunkX, int chunkZ) {
 		int n = ChunkTerrain.SPAN;
 		{
 			terrain.degraded = landCover.degraded() || tiles.values().stream().anyMatch(t -> t.degraded);
@@ -489,7 +507,24 @@ public final class TerrainField implements AutoCloseable {
 				}
 				if (config.useRoads || config.useRailways) {
 					long started = se.itssimple.realearth.Perf.start();
-					WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, chunkX, chunkZ, config.useRoads, config.useRailways);
+					long minX = Long.MAX_VALUE;
+					long minY = Long.MAX_VALUE;
+					long maxX = Long.MIN_VALUE;
+					long maxY = Long.MIN_VALUE;
+					for (int k = 0; k < n * n; k++) {
+						if (onGlobe[k]) {
+							minX = Math.min(minX, (long) Math.floor(sx[k]));
+							maxX = Math.max(maxX, (long) Math.ceil(sx[k]));
+							minY = Math.min(minY, (long) Math.floor(sy[k]));
+							maxY = Math.max(maxY, (long) Math.ceil(sy[k]));
+						}
+					}
+					long x0 = minX;
+					long y0 = minY;
+					long x1 = maxX;
+					long y1 = maxY;
+					Bridges.Network bridges = Bridges.network(this, tiles, ways, runs, r -> nearChunk(r, x0, y0, x1, y1));
+					WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, bridges, chunkX, chunkZ, config.useRoads, config.useRailways);
 					se.itssimple.realearth.Perf.stop("terrain.ways", started);
 				}
 			}
@@ -518,6 +553,14 @@ public final class TerrainField implements AutoCloseable {
 				out.computeIfAbsent(key(wx, row), k -> processedTile(wx, row));
 			}
 		}
+	}
+
+	/** How far, in samples, past a chunk a bridge can be and still matter to it: its ramps reach this far. */
+	private static final int BRIDGE_REACH_SAMPLES = 40;
+
+	private static boolean nearChunk(Bridges.Run r, long minX, long minY, long maxX, long maxY) {
+		return r.maxX >= minX - BRIDGE_REACH_SAMPLES && r.minX <= maxX + BRIDGE_REACH_SAMPLES && r.maxY >= minY - BRIDGE_REACH_SAMPLES
+			&& r.minY <= maxY + BRIDGE_REACH_SAMPLES;
 	}
 
 	private static ProcessedTile tileFor(Map<Long, ProcessedTile> tiles, long gx, long gy) {
@@ -569,6 +612,36 @@ public final class TerrainField implements AutoCloseable {
 	}
 
 	private void sampleColumn(Map<Long, ProcessedTile> tiles, double sx, double sy, ChunkTerrain out, int k) {
+		float[] g = new float[3];
+		sample(tiles, sx, sy, g);
+		out.groundMeters[k] = g[0];
+		out.waterMeters[k] = g[1];
+		if (g[2] != 0) {
+			out.lake[k] = true;
+		}
+	}
+
+	/**
+	 * Water surface in metres at a sample position, or NaN where it is dry (or the elevation there isn't
+	 * loaded): the same answer the column there gets.
+	 */
+	static double waterSurface(Map<Long, ProcessedTile> tiles, double sx, double sy) {
+		long x0 = (long) Math.floor(sx);
+		long y0 = (long) Math.floor(sy);
+		for (int b = -1; b <= 2; b++) {
+			for (int a = -1; a <= 2; a++) {
+				if (tileFor(tiles, x0 + a, y0 + b) == null) {
+					return Double.NaN;
+				}
+			}
+		}
+		float[] g = new float[3];
+		sample(tiles, sx, sy, g);
+		return g[1];
+	}
+
+	/** Ground (out[0]) and water surface (out[1], NaN where dry) in metres, and out[2] 1 for a lake. */
+	private static void sample(Map<Long, ProcessedTile> tiles, double sx, double sy, float[] out) {
 		long x0 = (long) Math.floor(sx);
 		long y0 = (long) Math.floor(sy);
 		double[] wx = new double[4];
@@ -623,38 +696,38 @@ public final class TerrainField implements AutoCloseable {
 			fj = Math.max(0, Math.min(ProcessedTile.FINE_SIZE - 1, fj));
 			int mapped = own.mapWater[fj * ProcessedTile.FINE_SIZE + fi];
 			if (mapped == 0) {
-				out.waterMeters[k] = Float.NaN;
-				out.groundMeters[k] = (float) height;
+				out[1] = Float.NaN;
+				out[0] = (float) height;
 				return;
 			}
 			double surface = mapped == 2 ? 0.0 : wet > 0 ? levelSum / wet : height;
 			double below = wet > 0 ? Math.max(1.0, depth / wet) : 1.0;
 			if (mapped == 2 || surface <= 0.5) {
-				out.waterMeters[k] = 0f;
-				out.groundMeters[k] = (float) Math.min(height, -below);
+				out[1] = 0f;
+				out[0] = (float) Math.min(height, -below);
 			} else {
-				out.lake[k] = true;
-				out.waterMeters[k] = (float) surface;
-				out.groundMeters[k] = (float) Math.min(height, surface - below);
+				out[2] = 1;
+				out[1] = (float) surface;
+				out[0] = (float) Math.min(height, surface - below);
 			}
 			return;
 		}
 
 		if (wet >= 0.5 && level > 0.5f) {
-			out.lake[k] = true;
-			out.waterMeters[k] = level;
-			out.groundMeters[k] = (float) Math.min(height, level - depth / wet);
+			out[2] = 1;
+			out[1] = level;
+			out[0] = (float) Math.min(height, level - depth / wet);
 		} else if (wet >= 0.5) {
 			// Flat at or below sea level is sea, not a lake: coastal water the source flattened to 0,
 			// or deep ocean whose coarse bathymetry was upsampled into perfectly flat patches.
-			out.waterMeters[k] = 0f;
-			out.groundMeters[k] = (float) Math.min(height, -depth / wet);
+			out[1] = 0f;
+			out[0] = (float) Math.min(height, -depth / wet);
 		} else if (height < 0) {
-			out.waterMeters[k] = 0f;
-			out.groundMeters[k] = (float) height;
+			out[1] = 0f;
+			out[0] = (float) height;
 		} else {
-			out.waterMeters[k] = Float.NaN;
-			out.groundMeters[k] = (float) height;
+			out[1] = Float.NaN;
+			out[0] = (float) height;
 		}
 	}
 

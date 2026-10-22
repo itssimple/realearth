@@ -461,6 +461,85 @@ final class SelfTest {
 		deleteTree(scratch);
 	}
 
+	/**
+	 * Walks a way's centreline (sample coordinates), carried on {@code extend} blocks past each end, and
+	 * counts the columns where the surface -- the deck where there is one, else the road -- is more than a
+	 * block above or below the column before. Columns off any road aren't walked. Returns {columns, steps, x, worst step, z} with x, z the
+	 * worst step's block, or Integer.MIN_VALUE when there is none.
+	 */
+	private static int[] walkSteps(TerrainField field, double[] p, int extend) {
+		int count = p.length / 2;
+		double[] bx = new double[count];
+		double[] bz = new double[count];
+		for (int i = 0; i < count; i++) {
+			double lat = Mercator.latitudeOfSampleY(p[2 * i + 1]);
+			double lon = Projection.wrapLongitude((p[2 * i] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0);
+			bx[i] = field.projection().blockX(lat, lon);
+			bz[i] = field.projection().blockZ(lat);
+		}
+		List<double[]> path = new ArrayList<>();
+		double[] head = {bx[0] - bx[1], bz[0] - bz[1]};
+		double[] tail = {bx[count - 1] - bx[count - 2], bz[count - 1] - bz[count - 2]};
+		double hl = Math.max(1e-9, Math.hypot(head[0], head[1]));
+		double tl = Math.max(1e-9, Math.hypot(tail[0], tail[1]));
+		path.add(new double[] {bx[0] + head[0] / hl * extend, bz[0] + head[1] / hl * extend});
+		for (int i = 0; i < count; i++) {
+			path.add(new double[] {bx[i], bz[i]});
+		}
+		path.add(new double[] {bx[count - 1] + tail[0] / tl * extend, bz[count - 1] + tail[1] / tl * extend});
+		int[] out = {0, 0, Integer.MIN_VALUE, 0, 0};
+		int lastX = Integer.MIN_VALUE;
+		int lastZ = Integer.MIN_VALUE;
+		int lastY = Integer.MIN_VALUE;
+		String lastHere = "";
+		for (int i = 0; i + 1 < path.size(); i++) {
+			double[] a = path.get(i);
+			double[] b = path.get(i + 1);
+			int n = (int) Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2) + 1;
+			for (int s = 0; s <= n; s++) {
+				int x = (int) Math.floor(a[0] + (b[0] - a[0]) * s / n);
+				int z = (int) Math.floor(a[1] + (b[1] - a[1]) * s / n);
+				if (x == lastX && z == lastZ) {
+					continue;
+				}
+				ChunkTerrain c;
+				try {
+					c = field.chunkBlocking(x >> 4, z >> 4, 120);
+				} catch (Exception e) {
+					continue;
+				}
+				int k = ChunkTerrain.index(x & 15, z & 15);
+				boolean onDeck = c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE;
+				if (!onDeck && c.way[k] == se.itssimple.realearth.osm.Ways.NONE) {
+					// Off the road (carried on straight past an end where the road turns): not walked.
+					lastX = x;
+					lastZ = z;
+					lastY = Integer.MIN_VALUE;
+					continue;
+				}
+				int y = onDeck ? c.deckY[k] : c.topSolidY[k];
+				String here = String.format("%d,%d y %d (deck %s way %d ground %.1f m water top %s)", x, z, y,
+					c.deckY[k] == Integer.MIN_VALUE ? "-" : c.deckY[k] + "/" + c.deckWay[k] + " " + String.format("%.1f m", c.deckMeters[k]), c.way[k],
+					c.groundMeters[k], c.waterTopY[k] == Integer.MIN_VALUE ? "-" : String.valueOf(c.waterTopY[k]));
+				out[0]++;
+				if (lastY != Integer.MIN_VALUE && Math.abs(y - lastY) > 1) {
+					out[1]++;
+					log("  step %d: %s -> %s", y - lastY, lastHere, here);
+					if (Math.abs(y - lastY) > out[3]) {
+						out[2] = x;
+						out[3] = Math.abs(y - lastY);
+						out[4] = z;
+					}
+				}
+				lastHere = here;
+				lastX = x;
+				lastZ = z;
+				lastY = y;
+			}
+		}
+		return out;
+	}
+
 	private static double length(double[] p) {
 		double l = 0;
 		for (int i = 0; i + 3 < p.length; i += 2) {
@@ -840,6 +919,34 @@ final class SelfTest {
 			}
 			log("Västerbron: %d chunks along it, %d deck columns (%d over water), %d with a deck block", along.size(), decks, overWater, placed);
 			check(overWater > 50 && placed >= decks * 9 / 10, "Västerbron's deck stands over the water (%d of %d columns)", placed, decks);
+
+			// Every paved bridge in the map tiles of Västerbron, the city centre and Slussen can be walked
+			// onto and along: down its centreline, from a few blocks before it to a few after, the surface
+			// never steps more than a block.
+			int bridges = 0;
+			int columns = 0;
+			int steps = 0;
+			java.util.Set<Long> walkedTiles = new java.util.LinkedHashSet<>();
+			for (double[] at : new double[][] {{59.3228, 18.0262}, {59.3293, 18.0686}, {59.3195, 18.0717}}) {
+				walkedTiles.add(ChunkPos.pack((int) Math.floor(Mercator.sampleX(at[1]) / (Mercator.TILE_SIZE * 2)),
+					(int) Math.floor(Mercator.sampleY(at[0]) / (Mercator.TILE_SIZE * 2))));
+			}
+			for (long tile : walkedTiles) {
+				for (var w : field.map().tile(ChunkPos.getX(tile), ChunkPos.getZ(tile)).join().ways()) {
+					if (!w.bridge() || !se.itssimple.realearth.osm.Ways.isPaved(w.kind())) {
+						continue;
+					}
+					bridges++;
+					int[] walked = walkSteps(field, w.points(), 8);
+					columns += walked[0];
+					steps += walked[1];
+					if (walked[1] > 0 && walked[2] != Integer.MIN_VALUE) {
+						log("bridge step: %d blocks at block %d,%d", walked[3], walked[2], walked[4]);
+					}
+				}
+			}
+			log("bridges in %d map tiles of Stockholm: %d, %d columns along them, %d steps of more than a block", walkedTiles.size(), bridges, columns, steps);
+			check(bridges > 10 && steps * 1000 <= columns, "bridges are walkable: %d steps over %d columns", steps, columns);
 		}
 
 		// Buildings: central Stockholm, as planned and as built.

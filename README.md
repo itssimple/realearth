@@ -67,7 +67,11 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   class, coarse dirt and gravel for tracks, dirt paths for footways and cycleways. Roads are levelled across
   their width where the ground allows.
 - **Railways and trams** are real rail on a gravel bed, curving and sloping to follow the line.
-- **Bridges** carry roads and railways over water and valleys on a deck at the height of the bridge's ends.
+- **Bridges** carry roads and railways over water and valleys. A bridge the map splits into pieces is built as
+  one: its deck runs straight between its two real ends, rising in a rounded crest only where it has to clear
+  water or a road beneath. Near the ground it is a road on filled ground at the deck's own height, so there is
+  no step onto it, and roads meeting a raised end ramp up to it (a block every three or so). Roads the map
+  draws across the water's edge are built up out of it as a causeway, so they don't break off at the shore.
   Tunnels are left inside the ground.
 
 Only newly generated chunks get these: in a world from an earlier version, towns and roads start where new
