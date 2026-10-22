@@ -67,9 +67,10 @@ public final class OsmWater {
 
 	/**
 	 * A named place: a city, town or village, or a district of one (suburb, quarter, neighbourhood), in
-	 * global z15 sample coordinates. Lower rank is more important.
+	 * global z15 sample coordinates. Lower rank is more important. {@code capital} is the admin level the
+	 * place is the capital of (2 a country's), or 0.
 	 */
-	public record Place(double x, double y, String cls, String name, int rank) {
+	public record Place(double x, double y, String cls, String name, int rank, int capital) {
 	}
 
 	/** A named street or path: its centreline in global z15 sample coordinates, its name, and its class. */
@@ -354,8 +355,9 @@ public final class OsmWater {
 		switch (cls) {
 			case "city", "town", "village", "hamlet", "suburb", "quarter", "neighbourhood" -> {
 				double rank = f.number("rank");
+				double capital = f.number("capital");
 				for (double[] p : parts) {
-					places.add(new Place(p[0], p[1], cls, name, Double.isNaN(rank) ? 99 : (int) rank));
+					places.add(new Place(p[0], p[1], cls, name, Double.isNaN(rank) ? 99 : (int) rank, Double.isNaN(capital) ? 0 : (int) capital));
 				}
 			}
 			default -> {

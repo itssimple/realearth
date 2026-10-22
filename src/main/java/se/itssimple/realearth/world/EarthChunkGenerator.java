@@ -3,6 +3,7 @@ package se.itssimple.realearth.world;
 import net.minecraft.world.level.block.RailBlock;
 import net.minecraft.world.level.block.state.properties.RailShape;
 import se.itssimple.realearth.osm.Ways;
+import java.util.ArrayList;
 import java.util.Arrays;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
@@ -139,8 +140,10 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		ChunkPos pos = chunk.getPos();
 		var kept = new java.util.HashMap<>(starts);
 		boolean changed = false;
+		// Built-up land cover, or mapped buildings: on a waterfront the land cover's centre is water.
 		if (outpost != null && starts.containsKey(outpost)
-			&& BuiltUpPlacement.builtShare(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 96) > 0.15) {
+			&& (BuiltUpPlacement.builtShare(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 96) > 0.15
+				|| BuiltUpPlacement.mappedBuildings(pos.getMinBlockX() + 8, pos.getMinBlockZ() + 8, 96) >= BuiltUpPlacement.BUILDINGS_REPLACE_VILLAGE)) {
 			kept.remove(outpost);
 			changed = true;
 		}
@@ -770,7 +773,50 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 	public void applyBiomeDecoration(net.minecraft.world.level.WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
 		long started = se.itssimple.realearth.Perf.start();
 		super.applyBiomeDecoration(level, chunk, structureManager);
+		registerPointsOfInterest(level, chunk);
 		se.itssimple.realearth.Perf.stop("features", started);
+	}
+
+	/**
+	 * Beds, job blocks and bells the buildings were painted with go into the level's record of points
+	 * of interest, as blocks placed through the region do: without it villagers find no home or work
+	 * in a chunk until it has been saved and loaded again. Recorded on the server thread, as vanilla does.
+	 */
+	private static void registerPointsOfInterest(net.minecraft.world.level.WorldGenLevel level, ChunkAccess chunk) {
+		var sections = chunk.getSections();
+		List<BlockPos> at = new ArrayList<>();
+		List<Holder<net.minecraft.world.entity.ai.village.poi.PoiType>> types = new ArrayList<>();
+		ChunkPos pos = chunk.getPos();
+		for (int i = 0; i < sections.length; i++) {
+			var section = sections[i];
+			if (section.hasOnlyAir() || !section.maybeHas(net.minecraft.world.entity.ai.village.poi.PoiTypes::hasPoi)) {
+				continue;
+			}
+			int baseY = chunk.getSectionYFromSectionIndex(i) << 4;
+			for (int y = 0; y < 16; y++) {
+				for (int z = 0; z < 16; z++) {
+					for (int x = 0; x < 16; x++) {
+						var type = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(section.getBlockState(x, y, z));
+						if (type.isPresent()) {
+							at.add(new BlockPos(pos.getMinBlockX() + x, baseY + y, pos.getMinBlockZ() + z));
+							types.add(type.get());
+						}
+					}
+				}
+			}
+		}
+		if (at.isEmpty()) {
+			return;
+		}
+		net.minecraft.server.level.ServerLevel server = level.getLevel();
+		server.getServer().execute(() -> {
+			var poi = server.getPoiManager();
+			for (int i = 0; i < at.size(); i++) {
+				if (poi.getType(at.get(i)).isEmpty()) {
+					poi.add(at.get(i), types.get(i));
+				}
+			}
+		});
 	}
 
 	@Override

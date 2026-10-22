@@ -46,6 +46,8 @@ final class SelfTest {
 	private static final List<String> FAILURES = new ArrayList<>();
 	/** Where the building checks found containers with loot: chunk x, chunk z, how many; for the Lootr check. */
 	private static volatile int[] lootrCheck;
+	/** The chunk of central Stockholm with the most beds, for the townsfolk check. */
+	private static volatile int[] homesAt;
 
 	private SelfTest() {
 	}
@@ -313,6 +315,40 @@ final class SelfTest {
 				server.submit(() -> forceArea(earth, lootrCheck[0], lootrCheck[1], r, false)).join();
 				check(converted >= lootrCheck[2], "Lootr turned the containers with loot into its own (%d of %d)", converted, lootrCheck[2]);
 			}
+			if (homesAt != null) {
+				// Townsfolk: villagers come home to beds round a player, and go again once nobody is near.
+				// Only where entities tick, as they do round a player: hold the town loaded.
+				ServerLevel earth = RealEarth.earthLevel(server);
+				server.submit(() -> forceArea(earth, homesAt[0], homesAt[1], 4, true)).join();
+				Thread.sleep(3_000);
+				int[] seen = server.submit(() -> {
+					BlockPos centre = new BlockPos(homesAt[0] * 16 + 8, 0, homesAt[1] * 16 + 8);
+					var box = new net.minecraft.world.phys.AABB(centre).inflate(56, 2000, 56);
+					int before = earth.getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class, box).size();
+					int came = 0;
+					for (int i = 0; i < 20; i++) {
+						if (se.itssimple.realearth.world.Townsfolk.comeHome(earth, field, centre, before + 3, List.of()) != null) {
+							came++;
+						}
+					}
+					int after = earth.getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class, box).size();
+					int gone = se.itssimple.realearth.world.Townsfolk.leave(earth, List.of());
+					var homes = earth.getPoiManager().getInSquare(t -> t.is(net.minecraft.world.entity.ai.village.poi.PoiTypes.HOME), centre, 56,
+						net.minecraft.world.entity.ai.village.poi.PoiManager.Occupancy.ANY).map(net.minecraft.world.entity.ai.village.poi.PoiRecord::getPos).toList();
+					long ticking = homes.stream().filter(earth::isPositionEntityTicking).count();
+					long built = homes.stream().filter(b -> {
+						ChunkTerrain t = field.chunkIfReady(b.getX() >> 4, b.getZ() >> 4);
+						return t != null && t.building[ChunkTerrain.index(b.getX() & 15, b.getZ() & 15)] != 0;
+					}).count();
+					log("townsfolk: %d beds round the centre, %d in buildings, %d where entities tick; centre ticking %s", homes.size(), built, ticking,
+						earth.isPositionEntityTicking(centre));
+					return new int[] {before, came, after, gone};
+				}).join();
+				server.submit(() -> forceArea(earth, homesAt[0], homesAt[1], 4, false)).join();
+				log("townsfolk round the centre of Stockholm: %d villagers there, %d came home (%d there then), %d went again", seen[0], seen[1], seen[2], seen[3]);
+				check(seen[1] >= 1 && seen[1] <= 3 && seen[2] == seen[0] + seen[1] && seen[3] == seen[1],
+					"villagers come home round a player, no more than there is room for, and go again (%d came, %d went)", seen[1], seen[3]);
+			}
 		} catch (Throwable e) {
 			RealEarth.LOGGER.error("[selftest] crashed", e);
 			FAILURES.add("crash: " + e);
@@ -544,6 +580,19 @@ final class SelfTest {
 						log("    not reached: %s %d on floor %d; the floor:%n%s", room.kind, room.id, f, inside.sketch(f));
 						if (!dumped) {
 							dumped = true;
+							// What else stands there: structures reaching into the building's chunks.
+							var registry = level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
+							java.util.Set<String> near = new java.util.TreeSet<>();
+							for (int cx = (int) Math.floor(plan.minX) >> 4; cx <= (int) Math.ceil(plan.maxX) >> 4; cx++) {
+								for (int cz = (int) Math.floor(plan.minZ) >> 4; cz <= (int) Math.ceil(plan.maxZ) >> 4; cz++) {
+									for (var s : level.getChunk(cx, cz).getAllReferences().entrySet()) {
+										if (!s.getValue().isEmpty()) {
+											near.add(registry.getKey(s.getKey()) + " in " + cx + "," + cz);
+										}
+									}
+								}
+							}
+							log("    structures reaching the building: %s", near);
 							for (int dy = 1; dy <= 2; dy++) {
 								int y = y0 + f * plan.storey + dy;
 								StringBuilder built = new StringBuilder();
@@ -915,7 +964,8 @@ final class SelfTest {
 						}
 					}
 				}
-				log("structure starts in 64 x 64 chunks at %d,%d (%d ms): %s", region[0], region[1], (System.nanoTime() - ts) / 1_000_000, counts);
+				log("structure starts in 64 x 64 chunks at %d,%d (%d ms, world seed %d): %s", region[0], region[1], (System.nanoTime() - ts) / 1_000_000,
+					earth.getSeed(), counts);
 				check(!counts.isEmpty(), "structures generate");
 				int villages = counts.entrySet().stream().filter(e -> e.getKey().startsWith("village")).mapToInt(java.util.Map.Entry::getValue).sum();
 				if (region[0] == startCx) {
@@ -1154,7 +1204,50 @@ final class SelfTest {
 				log("place at %s, %s: %s", e[0], e[1], got);
 				check(got != null && java.util.Objects.equals(got.town(), e[2]) && java.util.Objects.equals(got.district(), e[3]),
 					"%s, %s is in %s, %s", e[0], e[1], e[3], e[2]);
+				check(got != null && got.capital() == (e[2] != null), "%s, %s is %sa capital", e[0], e[1], e[2] != null ? "" : "not ");
 			}
+		}
+
+		// Advancements for real places: all load, under one root.
+		{
+			int found = 0;
+			for (String name : new String[] {"root", "town", "capital", "equator", "polar_circle", "prime_meridian", "date_line", "thin_air", "below_the_sea"}) {
+				if (server.getAdvancements().get(RealEarth.id(name)) != null) {
+					found++;
+				}
+			}
+			check(found == 9, "the Real Earth advancements load (%d of 9)", found);
+		}
+
+		// Slimes: in slime chunks only well below the sea, as in vanilla; not on the surface.
+		{
+			TerrainField field = RealEarth.terrain();
+			int startX = (int) field.projection().blockX(59.3293, 18.0686) >> 4;
+			int startZ = (int) field.projection().blockZ(59.3293) >> 4;
+			int surface = 0;
+			int deep = 0;
+			int chunks = 0;
+			for (int cx = startX - 8; cx <= startX + 8 && chunks < 3; cx++) {
+				for (int cz = startZ - 8; cz <= startZ + 8 && chunks < 3; cz++) {
+					if (net.minecraft.world.level.levelgen.WorldgenRandom.seedSlimeChunk(cx, cz, earth.getSeed(), 987234911L).nextInt(10) != 0) {
+						continue;
+					}
+					chunks++;
+					var chunk = earth.getChunk(cx, cz);
+					int x = cx * 16 + 8;
+					int z = cz * 16 + 8;
+					BlockPos top = new BlockPos(x, chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, 8, 8) + 1, z);
+					BlockPos low = new BlockPos(x, VerticalScale.SEA_LEVEL_Y - 60, z);
+					for (long seed = 0; seed < 200; seed++) {
+						surface += net.minecraft.world.entity.monster.Slime.checkSlimeSpawnRules(net.minecraft.world.entity.EntityType.SLIME, earth,
+							net.minecraft.world.entity.EntitySpawnReason.NATURAL, top, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
+						deep += net.minecraft.world.entity.monster.Slime.checkSlimeSpawnRules(net.minecraft.world.entity.EntityType.SLIME, earth,
+							net.minecraft.world.entity.EntitySpawnReason.NATURAL, low, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
+					}
+				}
+			}
+			log("slime spawn rule in %d slime chunks, 200 tries each: %d on the surface, %d 60 blocks under the sea", chunks, surface, deep);
+			check(chunks > 0 && surface == 0 && deep > 0, "slimes spawn deep in slime chunks, not on the surface (%d surface, %d deep)", surface, deep);
 		}
 
 		// Buildings: central Stockholm, as planned and as built.
@@ -1225,11 +1318,24 @@ final class SelfTest {
 				}
 			}
 			log("blocks in 3 x 3 chunks of buildings: %s", blocks);
-			int beds = blocks.entrySet().stream().filter(e -> e.getKey().endsWith("_bed")).mapToInt(java.util.Map.Entry::getValue).sum();
+			// Beds over the whole centre: the 3 x 3 chunks can be all offices.
+			int beds = 0;
+			int mostBeds = 0;
+			for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+				for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+					earth.getChunk(cx, cz);
+					ChunkTerrain t = field.chunkIfReady(cx, cz);
+					beds += t == null ? 0 : t.beds.size();
+					if (t != null && t.beds.size() > mostBeds) {
+						mostBeds = t.beds.size();
+						homesAt = new int[] {cx, cz};
+					}
+				}
+			}
 			int doors = blocks.entrySet().stream().filter(e -> e.getKey().endsWith("_door")).mapToInt(java.util.Map.Entry::getValue).sum();
 			check(blocks.getOrDefault("glass_pane", 0) > 100 && blocks.getOrDefault("lantern", 0) > 5 && blocks.getOrDefault("air", 0) > 1000,
 				"buildings have windows, lanterns and rooms");
-			check(beds >= 2 && doors >= 6, "buildings have beds (%d) and door blocks (%d)", beds, doors);
+			check(beds >= 5 && doors >= 6, "buildings have beds (%d) and door blocks (%d)", beds, doors);
 			// Chests and storeroom barrels carry a loot table (so Lootr converts them); job barrels and
 			// chiseled bookshelves don't, but the shelves hold books.
 			int looted = 0;
@@ -1275,6 +1381,9 @@ final class SelfTest {
 							uses.merge(plan.use + (plan.hall != null ? "/" + plan.hall : ""), 1, Integer::sum);
 							if (plan.floors > 1 && plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.WAREHOUSE) {
 								uses.merge(plan.interior().stairs.isEmpty() ? "storeys by ladder" : "storeys by stairs", 1, Integer::sum);
+								if (plan.interior().stairs.isEmpty()) {
+									log("ladder building %d (%s, %d floors of %d): ground floor\n%s", plan.id, plan.use, plan.floors, plan.storey, plan.interior().sketch(0));
+								}
 							}
 							plan.shops.forEach(s -> trades.merge(s.trade().name(), 1, Integer::sum));
 							plan.interior().rooms.forEach(r -> kinds.merge(r.kind.name(), 1, Integer::sum));

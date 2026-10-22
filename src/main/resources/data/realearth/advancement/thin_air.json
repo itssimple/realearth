@@ -1,0 +1,25 @@
+{
+  "parent": "realearth:root",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:feather"
+    },
+    "title": {
+      "translate": "advancements.realearth.thin_air.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.thin_air.description"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}

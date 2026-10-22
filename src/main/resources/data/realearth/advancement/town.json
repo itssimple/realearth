@@ -1,0 +1,24 @@
+{
+  "parent": "realearth:root",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:bell"
+    },
+    "title": {
+      "translate": "advancements.realearth.town.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.town.description"
+    }
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}

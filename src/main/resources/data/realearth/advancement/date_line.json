@@ -1,0 +1,25 @@
+{
+  "parent": "realearth:prime_meridian",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:recovery_compass"
+    },
+    "title": {
+      "translate": "advancements.realearth.date_line.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.date_line.description"
+    },
+    "frame": "challenge"
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}

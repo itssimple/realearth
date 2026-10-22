@@ -46,6 +46,9 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   the map's places: a city's name reaches some kilometres, a village's one or two.
 - **Signs.** Shops and halls have their name from the map on a sign over the door, and now and then a post at
   the kerb carries the name of the street beside it.
+- **Advancements for real places**, in a tab of their own: walk into a town on the map and into a country's
+  capital, cross the equator, a polar circle, the prime meridian and the date line, stand 4,000 m up in thin
+  air or on dry land below sea level.
 
 - **Real buildings.** Every building mapped in OpenStreetMap stands on its real footprint, built like a village
   house in the style of its climate: oak, cobblestone and brick in most of Europe, spruce in the north, snowy
@@ -56,7 +59,8 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   - **What each building is**, from the map's points of interest and land use (OpenFreeMap's `poi` and `landuse`
     layers):
     - **Flats**: cut into stairwell sections, each with a street door into its landing and a turning stair that
-      climbs a storey round a half landing. Two flats or so open off each landing, divided by walls into a hall,
+      climbs a storey round a half landing; where the outer wall slants away from the stairwell, a short hallway
+      leads from the landing out to the street door. Two flats or so open off each landing, divided by walls into a hall,
       living room, kitchen, bedrooms and sometimes a bathroom, a door in every wall.
     - **Shops**: a shop on the map takes the ground-floor flat nearest its point, as one room with its own street
       door, walled off from the stairwell; the flats above are as on every other floor. Bakeries, grocers,
@@ -70,8 +74,10 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
     flower pots, lanterns, and villager job blocks. Beds, chests and barrels are block entities (drawn as models
     or kept in memory), so only about one bed in ten is a real bed, the rest made up of wool under a blanket,
     and chests and barrels are kept few. A villager moves into about one chunk of town in twenty, into a real
-    bed, and takes up the trade it finds: enough to feel lived in, few enough that a city doesn't slow the
-    server down.
+    bed, and takes up the trade it finds. Round each player more come home, up to `townsfolk` (8) in the
+    town within about 50 blocks, one for every two beds at most, to beds out of sight; children among them.
+    Once every player is far away they go again, unless someone has traded with one, named it or leashed it.
+    So the streets near you are busy, and a city of thousands of beds doesn't slow the server down.
   - **Loot.** House chests hold what a village house's chest of the same climate holds, pantry barrels household
     goods (`realearth:chests/storeroom`), shop barrels the shop's stock (`realearth:chests/shop_bakery` and the
     like); a datapack can change any of them. All fill when first opened. With
@@ -247,6 +253,13 @@ cities.
 - **Monuments.** They sit 24 blocks under Earth's sea, with water filled only to sea level. Over deep ocean
   they stand on prismarine pillars down to the floor, the way vanilla monuments do over deep spots.
 - **Mineshafts and strongholds** keep vanilla's range below sea level.
+- **Pillager outposts** stay out of towns (built-up land or mapped buildings round them); patrols, raids and
+  other mobs spawn as in vanilla.
+
+**Mobs.** Vanilla's spawn rules measure from the sea level, so they work at Earth's, with one exception:
+slimes used fixed heights (slime chunks below Y 40, swamps between Y 50 and 70), which put them on the surface
+of every slime chunk. They are measured from Earth's sea level instead: slime chunks 23 blocks under the sea,
+as in vanilla.
 - **Biome checks** during generation use exact terrain. `/locate`, explorer maps and the stronghold search use
   a coarse ~1 km elevation grid instead, so they stay fast. Near coastlines their answer can occasionally
   disagree with what generates.
@@ -311,6 +324,7 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `placeTitles` | true | Show a town's name on walking into it, and the district's above the hotbar |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
 | `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
+| `townsfolk` | 8 | Most villagers kept in the town round each player (one per two beds at most); 0 turns it off |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |
 | `lakeWindowSamples`, `lakeFlatnessMeters` | 17, 0.02 | How large and how flat a lake must be |
 | `maxLakeDepthMeters` | 12 | Deepest carved lake bed |

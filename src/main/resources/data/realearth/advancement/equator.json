@@ -1,0 +1,25 @@
+{
+  "parent": "realearth:root",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:sunflower"
+    },
+    "title": {
+      "translate": "advancements.realearth.equator.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.equator.description"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}

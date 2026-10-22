@@ -128,6 +128,7 @@ public class RealEarth implements ModInitializer {
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			stop();
 			se.itssimple.realearth.world.Places.clear();
+			se.itssimple.realearth.world.Milestones.clear();
 		});
 		CommandRegistrationCallback.EVENT.register((dispatcher, registries, environment) ->
 			EarthCommand.register(dispatcher, config.teleportPermissionLevel));
@@ -149,6 +150,8 @@ public class RealEarth implements ModInitializer {
 				DegradedChunks.save();
 			}
 			se.itssimple.realearth.world.Places.tick(server);
+			se.itssimple.realearth.world.Townsfolk.tick(server);
+			se.itssimple.realearth.world.Milestones.tick(server);
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			if (isEarth(handler.player.level())) {

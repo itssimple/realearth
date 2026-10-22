@@ -17,7 +17,8 @@
     "InitialSpawnMixin",
     "RegistryLifecycleMixin",
     "DimensionStabilityMixin",
-    "SignBlockEntityAccessor"
+    "SignBlockEntityAccessor",
+    "SlimeSpawnMixin"
   ],
   "injectors": {
     "defaultRequire": 1

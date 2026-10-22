@@ -38,8 +38,11 @@ public final class Places {
 	private static final double SUBURB_REACH = 2000;
 	private static final double NEIGHBOURHOOD_REACH = 800;
 
-	/** Where someone is: a town and a district of it, either null. */
-	public record Here(String town, String district) {
+	/** Where someone is: a town and a district of it, either null; and whether the town is a country's capital. */
+	public record Here(String town, String district, boolean capital) {
+		Here(String town, String district) {
+			this(town, district, false);
+		}
 	}
 
 	private static final Map<UUID, Here> LAST = new HashMap<>();
@@ -47,11 +50,15 @@ public final class Places {
 	private Places() {
 	}
 
-	/** For the server tick: tells players who have moved into another town or district. */
+	/**
+	 * For the server tick: tells players who have moved into another town or district (unless titles are
+	 * off), and counts the town toward their advancements.
+	 */
 	public static void tick(MinecraftServer server) {
-		if (server.getTickCount() % EVERY != 0 || !RealEarth.config().placeTitles) {
+		if (server.getTickCount() % EVERY != 0) {
 			return;
 		}
+		boolean titles = RealEarth.config().placeTitles;
 		TerrainField field = RealEarth.terrain();
 		ServerLevel earth = RealEarth.earthLevel(server);
 		if (field == null || earth == null) {
@@ -68,6 +75,12 @@ public final class Places {
 			}
 			Here last = LAST.put(player.getUUID(), here);
 			if (Objects.equals(last, here)) {
+				continue;
+			}
+			if (here.town() != null) {
+				Milestones.town(player, here);
+			}
+			if (!titles) {
 				continue;
 			}
 			if (here.town() != null && (last == null || !here.town().equals(last.town()))) {
@@ -110,6 +123,7 @@ public final class Places {
 			return null;
 		}
 		String town = null;
+		boolean capital = false;
 		double best = Double.MAX_VALUE;
 		for (OsmWater.Place p : towns) {
 			double reach = switch (p.cls()) {
@@ -123,6 +137,7 @@ public final class Places {
 			if (d < reach && d / reach < best) {
 				best = d / reach;
 				town = p.name();
+				capital = p.capital() == 2;
 			}
 		}
 		String district = null;
@@ -144,7 +159,7 @@ public final class Places {
 			// A village or hamlet the low zoom leaves out: the place itself.
 			return new Here(district, null);
 		}
-		return new Here(town, district);
+		return new Here(town, district, capital);
 	}
 
 	/** The places in the 3 x 3 tiles round a sample position at a zoom, or null while any is still loading. */

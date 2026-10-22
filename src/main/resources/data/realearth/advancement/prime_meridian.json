@@ -1,0 +1,24 @@
+{
+  "parent": "realearth:root",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:clock"
+    },
+    "title": {
+      "translate": "advancements.realearth.prime_meridian.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.prime_meridian.description"
+    }
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}

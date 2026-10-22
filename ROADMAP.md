@@ -1,6 +1,6 @@
 # Real Earth roadmap
 
-Proposed features and known issues, roughly in the order they'd be worth doing. Nothing here is started.
+Proposed features and known issues, roughly in the order they'd be worth doing. Done parts are noted where a feature is under way.
 
 ## Features
 
@@ -20,26 +20,24 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 5. **Spawn safety.** If the start point is in the sea, spawn on the nearest land.
 6. **Towns that feel lived in.** Done: loot in chests, pantries and shop stock, Lootr-ready; buildings divided
    by what the map says they are (flats in stairwell sections with rooms, shops in ground-floor units, halls,
-   offices, warehouses, houses), with turning stairs, a door in every wall and furniture by room. Next:
-   1. **Places from the map.** "Entering Stockholm" on screen at town edges (the `place` layer); street
-      name signs at junctions and shop names by their doors (a sign's text needs setting once the chunk is
-      in the world: its block entity has no level while generating); parks with fountains and benches,
+   offices, warehouses, houses), with turning stairs, a door in every wall and furniture by room; place
+   names on screen, street and shop signs; villagers kept round each player. Next:
+   1. **Places from the map.** Parks with fountains and benches,
       cemeteries, allotments with crops and animals, marketplaces with stalls and a wandering trader,
       stations with minecarts on the platform, harbours with boats; cartographers' chests holding a map of
       their own town.
-   2. **More villagers, near the player.** Keep a number of villagers in the town around each player,
-      instead of a few placed for good at generation; those far away and never traded with go. Cats where
-      there are beds enough; children; an iron golem at bell squares.
+   2. **More villagers.** An iron golem at bell squares; villagers walking the streets by day rather than
+      only round their homes.
    3. **Rooms and details.** Chairs at tables, chimney smoke (a campfire under a chimney on some roofs),
       gardens, hedges and benches, trees along streets; shops on upper floors where the map gives a level.
    4. **Interiors that follow the building.** Layouts are on the block grid, so a building at an angle has
-      stepped inner walls, and about a third of multi-storey buildings find no straight bit of outer wall
-      for a stairwell's street door and get a ladder instead. Laying out along the building's own axis fixes
-      both.
+      stepped inner walls. Stairwells reach the street through a hallway there, so only the smallest
+      houses have ladders; laying out along the building's own axis would straighten the walls too.
    Also landmarks, and buildings in Distant Horizons' far terrain.
 7. **Villages that follow the streets**, where buildings aren't mapped: city villages are vanilla jigsaw villages
    on a grid; placing their houses along the real road network would fit better.
-8. **Real places as advancements.** Visit a capital, stand on a country's highest point, cross the equator.
+8. **Real places as advancements.** Done: towns, capitals, the equator, polar circles, prime meridian, date
+   line, thin air, below the sea. Next: a country's highest point, visiting ten towns, every continent.
 
 ## Known issues
 

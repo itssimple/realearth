@@ -1,4 +1,22 @@
 {
   "block.realearth.earth_portal": "Earth Portal",
-  "generator.realearth.earth": "Real Earth"
+  "generator.realearth.earth": "Real Earth",
+  "advancements.realearth.root.title": "Real Earth",
+  "advancements.realearth.root.description": "Set foot on the real Earth",
+  "advancements.realearth.town.title": "Welcome to Town",
+  "advancements.realearth.town.description": "Walk into a town on the map",
+  "advancements.realearth.capital.title": "Capital Idea",
+  "advancements.realearth.capital.description": "Visit a country's capital city",
+  "advancements.realearth.equator.title": "Crossing the Line",
+  "advancements.realearth.equator.description": "Cross the equator",
+  "advancements.realearth.polar_circle.title": "Midnight Sun",
+  "advancements.realearth.polar_circle.description": "Go beyond the Arctic or the Antarctic Circle",
+  "advancements.realearth.prime_meridian.title": "Zero Degrees",
+  "advancements.realearth.prime_meridian.description": "Cross the prime meridian",
+  "advancements.realearth.date_line.title": "Tomorrow, Yesterday",
+  "advancements.realearth.date_line.description": "Cross the 180th meridian, where the date changes",
+  "advancements.realearth.thin_air.title": "Thin Air",
+  "advancements.realearth.thin_air.description": "Stand 4,000 metres above sea level",
+  "advancements.realearth.below_the_sea.title": "Below the Sea",
+  "advancements.realearth.below_the_sea.description": "Stand on dry land below sea level"
 }

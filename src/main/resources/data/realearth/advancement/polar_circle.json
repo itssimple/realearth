@@ -1,0 +1,25 @@
+{
+  "parent": "realearth:root",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:snowball"
+    },
+    "title": {
+      "translate": "advancements.realearth.polar_circle.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.polar_circle.description"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}

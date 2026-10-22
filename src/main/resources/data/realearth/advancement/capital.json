@@ -1,0 +1,25 @@
+{
+  "parent": "realearth:town",
+  "criteria": {
+    "been_there": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:white_banner"
+    },
+    "title": {
+      "translate": "advancements.realearth.capital.title"
+    },
+    "description": {
+      "translate": "advancements.realearth.capital.description"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "been_there"
+    ]
+  ]
+}
