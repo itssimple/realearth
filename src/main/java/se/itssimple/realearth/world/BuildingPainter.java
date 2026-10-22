@@ -5,14 +5,26 @@ import java.util.Arrays;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChiseledBookShelfBlock;
+import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
+import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.storage.loot.BuiltInLootTables;
+import net.minecraft.world.level.storage.loot.LootTable;
 import se.itssimple.realearth.terrain.BuildingPlan;
 import se.itssimple.realearth.terrain.ChunkTerrain;
 
@@ -20,6 +32,10 @@ import se.itssimple.realearth.terrain.ChunkTerrain;
  * Builds a chunk's share of its buildings: foundation, floors, walls with windows and corner posts, a
  * front door to the street, ladders between storeys, a roof, and furniture -- beds, chests, crafting
  * tables, furnaces, a villager job block, bookshelves, lanterns.
+ *
+ * Chests and storeroom barrels get a loot table rather than items, so they fill when first opened, the
+ * way village chests do; Lootr, when installed, turns them into a chest per player. Barrels that are a
+ * villager's job block stay empty.
  *
  * Everything is decided from the building's plan and the block position alone, so neighbouring chunks
  * agree on the parts of a building they share.
@@ -40,6 +56,25 @@ final class BuildingPainter {
 		Blocks.SMITHING_TABLE, Blocks.STONECUTTER, Blocks.GRINDSTONE, Blocks.CAULDRON, Blocks.BARREL, Blocks.SMOKER};
 	private static final Block[] FLOWERS = {Blocks.POTTED_POPPY, Blocks.POTTED_DANDELION, Blocks.POTTED_BLUE_ORCHID, Blocks.POTTED_FERN,
 		Blocks.POTTED_AZURE_BLUET, Blocks.POTTED_OXEYE_DAISY};
+
+	/** Household goods in the storerooms' barrels: food, fuel and odds and ends. A datapack can change it. */
+	private static final ResourceKey<LootTable> STOREROOM = ResourceKey.create(Registries.LOOT_TABLE,
+		Identifier.fromNamespaceAndPath("realearth", "chests/storeroom"));
+	/** Share of bookshelves that are chiseled ones, holding a few books. */
+	private static final double CHISELED = 0.25;
+	/** Share of furnaces with some fuel left in them. */
+	private static final double FUELLED = 0.4;
+
+	/** A house chest holds what a village house's chest of the same climate holds. */
+	private static ResourceKey<LootTable> houseLoot(BuildingPlan.Style style) {
+		return switch (style) {
+			case PLAINS -> BuiltInLootTables.VILLAGE_PLAINS_HOUSE;
+			case TAIGA -> BuiltInLootTables.VILLAGE_TAIGA_HOUSE;
+			case SNOWY -> BuiltInLootTables.VILLAGE_SNOWY_HOUSE;
+			case DESERT -> BuiltInLootTables.VILLAGE_DESERT_HOUSE;
+			case SAVANNA -> BuiltInLootTables.VILLAGE_SAVANNA_HOUSE;
+		};
+	}
 
 	/** What a building is made of. */
 	private record Palette(BlockState wall, BlockState corner, BlockState floor, BlockState foundation, Block stairs, BlockState roofFull,
@@ -330,14 +365,22 @@ final class BuildingPainter {
 							set(chunk, pos, fx, y, fz, with(with(state(bed), BlockStateProperties.HORIZONTAL_FACING, head), BlockStateProperties.BED_PART, BedPart.FOOT));
 							beds.add(new int[] {baseX + fx, y, baseZ + fz});
 						}
-						case CHEST -> set(chunk, pos, x, y, z, with(state(Blocks.CHEST), BlockStateProperties.HORIZONTAL_FACING, away));
+						case CHEST -> loot(set(chunk, pos, x, y, z, with(state(Blocks.CHEST), BlockStateProperties.HORIZONTAL_FACING, away)), houseLoot(p.style),
+							p, wx, y, wz);
 						case CRAFTING -> set(chunk, pos, x, y, z, state(Blocks.CRAFTING_TABLE));
-						case FURNACE -> set(chunk, pos, x, y, z, with(state(Blocks.FURNACE), BlockStateProperties.HORIZONTAL_FACING, away));
-						case BARREL -> set(chunk, pos, x, y, z, with(state(Blocks.BARREL), BlockStateProperties.FACING, Direction.UP));
+						case FURNACE -> {
+							BlockEntity furnace = set(chunk, pos, x, y, z, with(state(Blocks.FURNACE), BlockStateProperties.HORIZONTAL_FACING, away));
+							double fuel = p.hash(wx, f, wz, 9);
+							if (furnace instanceof AbstractFurnaceBlockEntity fe && fuel < FUELLED) {
+								// Slot 1 is the fuel.
+								fe.setItem(1, new ItemStack(fuel < FUELLED / 2 ? Items.COAL : Items.CHARCOAL, 1 + (int) (fuel / FUELLED * 8) % 4));
+							}
+						}
+						case BARREL -> loot(set(chunk, pos, x, y, z, with(state(Blocks.BARREL), BlockStateProperties.FACING, Direction.UP)), STOREROOM, p, wx, y, wz);
 						case BOOKSHELF -> {
-							set(chunk, pos, x, y, z, state(Blocks.BOOKSHELF));
+							bookshelf(chunk, pos, x, y, z, away, p.hash(wx, f, wz, 8));
 							if (p.storey > 3) {
-								set(chunk, pos, x, y + 1, z, state(Blocks.BOOKSHELF));
+								bookshelf(chunk, pos, x, y + 1, z, away, p.hash(wx, f + 64, wz, 8));
 							}
 						}
 						case JOB -> {
@@ -408,9 +451,46 @@ final class BuildingPainter {
 		return best;
 	}
 
-	private static void set(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, BlockState s) {
-		if (y <= chunk.getMinY() || y >= chunk.getMaxY()) {
+	/**
+	 * Gives a container its loot table, with a seed from its place so the same chest always rolls the
+	 * same loot. Lootr ignores that seed by default and rolls each player their own.
+	 */
+	private static void loot(BlockEntity container, ResourceKey<LootTable> table, BuildingPlan p, int wx, int y, int wz) {
+		if (container instanceof RandomizableContainerBlockEntity c) {
+			c.setLootTable(table, BlockPos.asLong(wx, y, wz) ^ p.id * 0x9E3779B97F4A7C15L | 1);
+		}
+	}
+
+	/** A plain bookshelf, or now and then a chiseled one with one to five books on it. */
+	private static void bookshelf(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, Direction facing, double h) {
+		if (h >= CHISELED) {
+			set(chunk, pos, x, y, z, state(Blocks.BOOKSHELF));
 			return;
+		}
+		// Which of the six slots hold a book, from the rest of the hash; never none.
+		int slots = (int) (h / CHISELED * 64) & 0b111111;
+		if (slots == 0 || slots == 0b111111) {
+			slots = 0b010110;
+		}
+		BlockState s = with(state(Blocks.CHISELED_BOOKSHELF), BlockStateProperties.HORIZONTAL_FACING, facing);
+		for (int i = 0; i < 6; i++) {
+			s = s.setValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(i), (slots >> i & 1) == 1);
+		}
+		// The block's state shows the books; the block entity holds them. Set straight into its list:
+		// setItem would update the block in a level the chunk isn't in yet.
+		if (set(chunk, pos, x, y, z, s) instanceof ChiseledBookShelfBlockEntity shelf) {
+			for (int i = 0; i < 6; i++) {
+				if ((slots >> i & 1) == 1) {
+					shelf.getItems().set(i, new ItemStack(Items.BOOK));
+				}
+			}
+		}
+	}
+
+	/** Sets a block, and its block entity when it has one; returns that block entity, or null. */
+	private static BlockEntity set(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, BlockState s) {
+		if (y <= chunk.getMinY() || y >= chunk.getMaxY()) {
+			return null;
 		}
 		chunk.setBlockState(pos.set(x, y, z), s, 0);
 		// Blocks set straight into a chunk get no block entity of their own: a bed, chest or bell would
@@ -420,7 +500,9 @@ final class BuildingPainter {
 			var entity = entityBlock.newBlockEntity(at, s);
 			if (entity != null) {
 				chunk.setBlockEntity(entity);
+				return entity;
 			}
 		}
+		return null;
 	}
 }

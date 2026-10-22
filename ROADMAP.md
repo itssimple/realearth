@@ -18,14 +18,32 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 4. **Real day length and sun.** Sunrise and sunset from latitude and today's date: midnight sun in Kiruna in
    June, six-hour days in Stockholm in December. Optionally seasonal snow cover.
 5. **Spawn safety.** If the start point is in the sea, spawn on the nearest land.
-6. **Richer buildings.** Done: real footprints as furnished village houses. Next: interior walls into rooms, shops
-   and job blocks from OpenStreetMap's points of interest (bakery, library, church...), landmarks, and buildings
-   in Distant Horizons' far terrain.
+6. **Towns that feel lived in.** Done: real footprints as furnished village houses; house chests roll the
+   village house loot of their climate, storeroom barrels `realearth:chests/storeroom`, so Lootr makes them
+   per player; some furnaces keep fuel, some bookshelves are chiseled ones with books. Next, in this order:
+   1. **What each building is.** OpenFreeMap's tiles also carry `poi` (shop, amenity, place of worship...) and
+      `landuse` (residential, industrial, retail...) layers, not read yet. A point inside a footprint names
+      the building: a bakery gets smokers and bread barrels and a butcher's loot, a library shelves, a lectern
+      and a librarian, a church pews and a bell, a hardware shop a smithy; industrial land gets warehouses.
+      Each type its own loot table. Signs by the door with the shop's real name.
+   2. **Places from the map.** "Entering Stockholm" on screen at town edges (the `place` layer); street
+      name signs at junctions; parks with fountains and benches, cemeteries, allotments with crops and
+      animals, marketplaces with stalls and a wandering trader, stations with minecarts on the platform,
+      harbours with boats; cartographers' chests holding a map of their own town.
+   3. **More villagers, near the player.** Keep a number of villagers in the town around each player,
+      instead of a few placed for good at generation; those far away and never traded with go. More beds
+      per home, so cats come too; children; an iron golem at bell squares.
+   4. **Rooms and details.** Interior walls into rooms, tables and chairs, carpets, kitchens; chimney smoke
+      (a campfire under a chimney on some roofs); gardens, hedges and benches; trees along streets.
+   Also landmarks, and buildings in Distant Horizons' far terrain.
 7. **Villages that follow the streets**, where buildings aren't mapped: city villages are vanilla jigsaw villages
    on a grid; placing their houses along the real road network would fit better.
+8. **Real places as advancements.** Visit a capital, stand on a country's highest point, cross the equator.
 
 ## Known issues
 
+- **Doors you can walk round.** Some buildings get a door with no wall block beside it, so the door
+  can be bypassed.
 - **LOD land-cover patches.** Seen from high up, sparse forest (e.g. the Kaibab plateau by the Grand Canyon) shows
   faint rectangles of different green where Distant Horizons switches detail level: each level samples
   ESA WorldCover at its own resolution, so the share of tree pixels differs. Fix by taking the majority

@@ -52,6 +52,11 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
     job blocks. A villager moves into about one chunk of town in twenty and takes up the trade it finds: enough
     to feel lived in, few enough that a city doesn't slow the server down. Beds, chests and furnaces are kept
     rare for the same reason (they are drawn as models or tick).
+  - **Loot.** House chests hold what a village house's chest of the same climate holds, and storeroom barrels
+    household goods (`realearth:chests/storeroom`, which a datapack can change); both fill when first opened.
+    With [Lootr](https://modrinth.com/mod/lootr) installed each player gets their own. Barrels that are a
+    villager's job block stay empty. Some furnaces have fuel left in them, and some bookshelves are chiseled
+    ones with a few books.
   - Between them: wells, farm plots, bells on their posts, hay stores, and street lamps along the streets.
   - Each building stands level, on the ground under its whole footprint: a foundation on the low side, dug in on
     the high side.

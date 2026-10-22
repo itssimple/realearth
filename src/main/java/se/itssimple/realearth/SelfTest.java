@@ -44,6 +44,8 @@ import se.itssimple.realearth.terrain.VerticalScale;
  */
 final class SelfTest {
 	private static final List<String> FAILURES = new ArrayList<>();
+	/** Where the building checks found containers with loot: chunk x, chunk z, how many; for the Lootr check. */
+	private static volatile int[] lootrCheck;
 
 	private SelfTest() {
 	}
@@ -287,6 +289,30 @@ final class SelfTest {
 				}
 			});
 			onServer.join();
+			if (lootrCheck != null && net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("lootr")) {
+				// Lootr converts containers with a loot table on its own tick, once their chunk and the chunks
+				// two around it are fully loaded, as they are round a player: hold them loaded, let the server
+				// run, then look again.
+				ServerLevel earth = RealEarth.earthLevel(server);
+				int r = 4;
+				server.submit(() -> forceArea(earth, lootrCheck[0], lootrCheck[1], r, true)).join();
+				Thread.sleep(10_000);
+				int converted = server.submit(() -> {
+					int n = 0;
+					for (int cx = lootrCheck[0] - 1; cx <= lootrCheck[0] + 1; cx++) {
+						for (int cz = lootrCheck[1] - 1; cz <= lootrCheck[1] + 1; cz++) {
+							for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
+								if (be.getClass().getName().startsWith("noobanidus.mods.lootr")) {
+									n++;
+								}
+							}
+						}
+					}
+					return n;
+				}).join();
+				server.submit(() -> forceArea(earth, lootrCheck[0], lootrCheck[1], r, false)).join();
+				check(converted >= lootrCheck[2], "Lootr turned the containers with loot into its own (%d of %d)", converted, lootrCheck[2]);
+			}
 		} catch (Throwable e) {
 			RealEarth.LOGGER.error("[selftest] crashed", e);
 			FAILURES.add("crash: " + e);
@@ -294,6 +320,14 @@ final class SelfTest {
 
 		log(FAILURES.isEmpty() ? "PASS" : "FAIL (%d): %s", FAILURES.size(), FAILURES);
 		server.execute(() -> server.halt(false));
+	}
+
+	private static void forceArea(ServerLevel level, int cx, int cz, int r, boolean forced) {
+		for (int x = cx - r; x <= cx + r; x++) {
+			for (int z = cz - r; z <= cz + r; z++) {
+				level.setChunkForced(x, z, forced);
+			}
+		}
 	}
 
 	/**
@@ -881,6 +915,31 @@ final class SelfTest {
 			check(blocks.getOrDefault("glass_pane", 0) > 100 && blocks.getOrDefault("lantern", 0) > 5 && blocks.getOrDefault("air", 0) > 1000,
 				"buildings have windows, lanterns and rooms");
 			check(beds >= 2 && doors >= 6, "buildings have beds (%d) and door blocks (%d)", beds, doors);
+			// Chests and storeroom barrels carry a loot table (so Lootr converts them); job barrels and
+			// chiseled bookshelves don't, but the shelves hold books.
+			int looted = 0;
+			int containers = 0;
+			int books = 0;
+			for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
+				for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
+					for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
+						if (be instanceof net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity r) {
+							containers++;
+							if (r.getLootTable() != null) {
+								looted++;
+							}
+						} else if (be instanceof net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity shelf) {
+							books += shelf.getItems().stream().filter(s -> !s.isEmpty()).count();
+						}
+					}
+				}
+			}
+			log("containers in 3 x 3 chunks of buildings: %d, %d with a loot table; %d books on chiseled shelves", containers, looted, books);
+			check(looted >= 3 && looted * 2 >= containers, "chests and storeroom barrels have loot tables (%d of %d)", looted, containers);
+			lootrCheck = new int[] {bestCx, bestCz, looted};
+			var storeroom = server.reloadableRegistries().getLootTable(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.LOOT_TABLE,
+				net.minecraft.resources.Identifier.fromNamespaceAndPath("realearth", "chests/storeroom")));
+			check(storeroom != net.minecraft.world.level.storage.loot.LootTable.EMPTY, "the storeroom loot table loads");
 			var villagers = earth.getEntities(net.minecraft.world.entity.EntityType.VILLAGER,
 				new net.minecraft.world.phys.AABB((bestCx - 2) * 16, VerticalScale.MIN_Y, (bestCz - 2) * 16, (bestCx + 3) * 16, VerticalScale.MAX_Y, (bestCz + 3) * 16),
 				e -> true);
