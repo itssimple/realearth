@@ -123,7 +123,26 @@ final class BuildingPainter {
 		BlockState flatRoof, BlockState trim, BlockState window, Block door) {
 	}
 
+	/**
+	 * The climate's palette, with walls the building's colour on the map where it has one: brick for
+	 * brick, yellow render, Falu red, white plaster; glass facades with grey bands between storeys.
+	 */
 	private static Palette palette(BuildingPlan p) {
+		Palette styled = styled(p);
+		if (Facades.glass(p.colour)) {
+			return new Palette(state(Blocks.LIGHT_BLUE_STAINED_GLASS), state(Blocks.LIGHT_GRAY_CONCRETE), styled.floor(), styled.foundation(),
+				styled.stairs(), styled.roofFull(), styled.flatRoof(), state(Blocks.LIGHT_GRAY_CONCRETE), state(Blocks.LIGHT_BLUE_STAINED_GLASS_PANE),
+				styled.door());
+		}
+		Block wall = Facades.wall(p.colour);
+		if (wall == null) {
+			return styled;
+		}
+		return new Palette(state(wall), state(Facades.trim(wall, p.colour)), styled.floor(), styled.foundation(), styled.stairs(), styled.roofFull(),
+			styled.flatRoof(), styled.trim(), styled.window(), styled.door());
+	}
+
+	private static Palette styled(BuildingPlan p) {
 		boolean big = p.floors >= 3;
 		int v = p.palette;
 		BlockState glass = Blocks.GLASS_PANE.defaultBlockState();
@@ -321,7 +340,8 @@ final class BuildingPainter {
 					}
 					if (f < p.floors - 1) {
 						int y = base + storey;
-						BlockState s = wall ? pal.wall
+						// Between storeys: the wall, or on a glass facade a band of its frame.
+						BlockState s = wall ? (pal.wall.is(Blocks.LIGHT_BLUE_STAINED_GLASS) ? pal.corner : pal.wall)
 							: shaft != null ? step(inside.stepAt(shaft, wx, wz, y, floorY, storey, p.floors), steps, pal.floor)
 							: ladder >= 0 ? ladder(ladder) : pal.floor;
 						set(chunk, pos, x, y, z, s);
@@ -357,6 +377,10 @@ final class BuildingPainter {
 						set(chunk, pos, x, y, z, pal.roofFull);
 					}
 					highest = roofBase + Math.max(level, 1);
+				}
+				BuildingPlan.Tower tower = p.towerAt(wx, wz);
+				if (tower != null) {
+					highest = Math.max(highest, tower(chunk, pos, x, z, wx, wz, p, pal, tower, roofBase));
 				}
 				// Whatever ground stood above the building is dug away.
 				for (int y = highest + 1; y <= ground; y++) {
@@ -419,6 +443,46 @@ final class BuildingPainter {
 				}
 			}
 		}
+	}
+
+	/**
+	 * A tower's column above the roof: its wall, with windows a storey apart, and a cap -- pointed on a
+	 * narrow tower, flat with a parapet on a wide one. Solid inside: there is no way in, and a dark
+	 * hollow would only fill with monsters. Returns the Y of the top block.
+	 */
+	private static int tower(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int z, int wx, int wz, BuildingPlan p, Palette pal,
+		BuildingPlan.Tower tower, int roofBase) {
+		boolean eastWest = !tower.contains(wx - 1, wz) || !tower.contains(wx + 1, wz);
+		boolean edge = false;
+		int sides = 0;
+		for (int d = 0; d < 4; d++) {
+			if (!tower.contains(wx + DX[d], wz + DZ[d])) {
+				edge = true;
+				sides++;
+			}
+		}
+		boolean corner = sides >= 2;
+		int capBase = tower.topY() - tower.capRise();
+		for (int y = roofBase + 1; y <= capBase; y++) {
+			int dy = (y - roofBase) % p.storey;
+			BlockState s = edge && !corner && (dy == 2 || dy == 3) && window(wx, wz, eastWest) ? pane(pal.window, eastWest)
+				: corner ? pal.corner : pal.wall;
+			set(chunk, pos, x, y, z, s);
+		}
+		if (tower.capRise() == 0) {
+			set(chunk, pos, x, capBase + 1, z, edge ? pal.trim : pal.flatRoof);
+			if (edge) {
+				set(chunk, pos, x, capBase + 2, z, pal.trim);
+				return capBase + 2;
+			}
+			return capBase + 1;
+		}
+		// A pyramid: the further in from the tower's walls, the higher, to its point at the top.
+		int level = (int) Math.max(1, Math.min(tower.capRise(), Math.ceil(tower.edgeDistance(wx, wz) / Math.max(0.5, tower.halfDepth()) * tower.capRise())));
+		for (int y = capBase + 1; y <= capBase + level; y++) {
+			set(chunk, pos, x, y, z, pal.roofFull);
+		}
+		return capBase + level;
 	}
 
 	/** One thing in a room, standing on the floor at y. */

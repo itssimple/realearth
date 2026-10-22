@@ -56,6 +56,47 @@ public final class BuildingPlan {
 	public final Style style;
 	/** Which of the building palettes of its style it uses. */
 	public final int palette;
+	/** Its colour on the map, 0xRRGGBB, or Colours.NONE: its walls are made to match. */
+	public final int colour;
+	/** Towers and other raised parts standing on its roof. */
+	public final List<Tower> towers;
+
+	/** A raised part as the map gives it, in block coordinates: where it is and how high, in metres. */
+	record Raised(List<double[]> rings, double minMeters, double heightMeters) {
+	}
+
+	/**
+	 * A tower on the roof: its outline in block coordinates, the Y its top reaches, and how much of
+	 * that is a pointed cap (0 for a flat top).
+	 */
+	public record Tower(List<double[]> rings, int topY, int capRise, double halfDepth, double minX, double minZ, double maxX, double maxZ) {
+		public boolean contains(int x, int z) {
+			return x + 1 > minX && x < maxX && z + 1 > minZ && z < maxZ && BuildingPlan.contains(rings, x + 0.5, z + 0.5);
+		}
+
+		/** Distance from a column's centre to the tower's nearest wall, in blocks. */
+		public double edgeDistance(int x, int z) {
+			double best = Double.MAX_VALUE;
+			for (double[] r : rings) {
+				int n = r.length / 2;
+				for (int i = 0, j = n - 1; i < n; j = i++) {
+					best = Math.min(best, segment(x + 0.5, z + 0.5, r[j * 2], r[j * 2 + 1], r[i * 2], r[i * 2 + 1]));
+				}
+			}
+			return best;
+		}
+	}
+
+	/** The tower standing on a column (the tallest, where a tower's stages stand one on another), or null. */
+	public Tower towerAt(int x, int z) {
+		Tower best = null;
+		for (Tower t : towers) {
+			if ((best == null || t.topY() > best.topY()) && t.contains(x, z)) {
+				best = t;
+			}
+		}
+		return best;
+	}
 	/**
 	 * Doors: {x, z, facing} with facing the way out (0 north, 1 east, 2 south, 3 west). The first is
 	 * the front door, towards the nearest street; long walls get one more each.
@@ -76,8 +117,8 @@ public final class BuildingPlan {
 	private final int tileX;
 	private final int tileY;
 
-	BuildingPlan(long id, List<double[]> rings, int floorY, int floors, int storey, int roofRise, Style style, int palette, List<int[]> doors,
-		Use use, Trade hall, List<Shop> shops, se.itssimple.realearth.geo.Projection projection, int tileX, int tileY) {
+	BuildingPlan(long id, List<double[]> rings, int floorY, int floors, int storey, int roofRise, Style style, int palette, int colour, List<Tower> towers,
+		List<int[]> doors, Use use, Trade hall, List<Shop> shops, se.itssimple.realearth.geo.Projection projection, int tileX, int tileY) {
 		this.id = id;
 		this.rings = rings;
 		double x0 = Double.MAX_VALUE;
@@ -102,6 +143,8 @@ public final class BuildingPlan {
 		this.roofRise = roofRise;
 		this.style = style;
 		this.palette = palette;
+		this.colour = colour;
+		this.towers = towers;
 		this.doors = doors;
 		this.use = use;
 		this.hall = hall;
@@ -218,8 +261,8 @@ public final class BuildingPlan {
 	}
 
 	/** Builds plans for a map tile's building, or null when it can't stand (too small, in the water). */
-	static BuildingPlan of(long id, List<double[]> rings, double floorMeters, double latitude, double heightMeters, double area,
-		TerrainField field, Style style, List<int[]> doors, double storeyMeters, int maxFloors, Use use, Trade hall, List<Shop> shops, int tileX, int tileY) {
+	static BuildingPlan of(long id, List<double[]> rings, double floorMeters, double latitude, double heightMeters, int colour, List<Raised> raised,
+		double area, TerrainField field, Style style, List<int[]> doors, double storeyMeters, int maxFloors, Use use, Trade hall, List<Shop> shops, int tileX, int tileY) {
 		double perMeter = field.projection().blocksPerMeter(latitude);
 		int storey = Math.max(5, (int) Math.ceil(storeyMeters * perMeter));
 		double realHeight = !Double.isNaN(heightMeters) && heightMeters > 0 ? heightMeters : area < 40 ? 3 : 6;
@@ -241,7 +284,34 @@ public final class BuildingPlan {
 		boolean pitched = style != Style.DESERT && floors <= 6 && halfDepth <= 15 && halfDepth >= 2;
 		int rise = pitched ? (int) Math.max(2, Math.min(8, Math.floor(halfDepth))) : 0;
 		int palette = (int) ((id >>> 7) & 0xFF);
-		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, doors, use, hall, shops, field.projection(), tileX, tileY);
+		// Towers: heights stretched as the building's are (its storeys are taller than real ones), on
+		// the roof at the least; a pointed cap on a narrow one.
+		double stretch = floors * storey / realHeight;
+		int roofTop = floorY + floors * storey + rise;
+		List<Tower> towers = new java.util.ArrayList<>();
+		for (Raised r : raised) {
+			int top = Math.min(VerticalScale.MAX_Y - 4, floorY + (int) Math.round(r.heightMeters() * stretch));
+			if (top < roofTop + 2) {
+				continue;
+			}
+			double depth = halfDepth(r.rings());
+			int cap = depth <= 4 ? (int) Math.max(2, Math.min(12, Math.min(depth * 3, (top - roofTop) / 2.0))) : 0;
+			double x0 = Double.MAX_VALUE;
+			double z0 = Double.MAX_VALUE;
+			double x1 = -Double.MAX_VALUE;
+			double z1 = -Double.MAX_VALUE;
+			for (double[] ring : r.rings()) {
+				for (int i = 0; i < ring.length; i += 2) {
+					x0 = Math.min(x0, ring[i]);
+					x1 = Math.max(x1, ring[i]);
+					z0 = Math.min(z0, ring[i + 1]);
+					z1 = Math.max(z1, ring[i + 1]);
+				}
+			}
+			towers.add(new Tower(r.rings(), top, cap, depth, x0, z0, x1, z1));
+		}
+		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, colour, List.copyOf(towers), doors, use, hall, shops,
+			field.projection(), tileX, tileY);
 	}
 
 	/** The farthest any point inside the footprint is from its edge, in blocks: half the depth of its widest wing. */

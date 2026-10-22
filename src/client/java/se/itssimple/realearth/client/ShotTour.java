@@ -73,6 +73,7 @@ final class ShotTour {
 		new Shot("inside-shop", 59.3293, 18.0686, 0, 0, 15),
 		new Shot("inside-flat", 59.3293, 18.0686, 0, 0, 15),
 		new Shot("inside-front", 59.3293, 18.0686, 0, 0, 5),
+		new Shot("inside-tower", 59.3293, 18.0686, 0, 0, 10),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
@@ -191,16 +192,41 @@ final class ShotTour {
 	 */
 	private static BlockPos findInterior(ServerLevel level, TerrainField field, int x, int z, String what, float[] look) {
 		java.util.Set<Long> seen = new java.util.HashSet<>();
-		for (int r = 0; r <= 6; r++) {
+		boolean tower = what.equals("tower");
+		for (int r = 0; r <= (tower ? 16 : 6); r++) {
 			for (int dx = -r; dx <= r; dx++) {
 				for (int dz = -r; dz <= r; dz++) {
-					var t = field.chunkIfReady((x >> 4) + dx, (z >> 4) + dz);
+					if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+						continue; // each ring once
+					}
+					se.itssimple.realearth.terrain.ChunkTerrain t;
+					try {
+						// Towers are few: the search goes further, loading the terrain on its way.
+						t = tower ? field.chunkBlocking((x >> 4) + dx, (z >> 4) + dz, 30) : field.chunkIfReady((x >> 4) + dx, (z >> 4) + dz);
+					} catch (Exception e) {
+						t = null;
+					}
 					if (t == null) {
 						continue;
 					}
 					for (var plan : t.plans) {
 						if (!seen.add(plan.id)) {
 							continue;
+						}
+						if (what.equals("tower")) {
+							// From the street side, some way off and a little below its top, looking at the tallest tower.
+							var best = plan.towers.stream().max(java.util.Comparator.comparingInt(se.itssimple.realearth.terrain.BuildingPlan.Tower::topY));
+							if (best.isEmpty()) {
+								continue;
+							}
+							var tw = best.get();
+							int tx = (int) Math.round((tw.minX() + tw.maxX()) / 2);
+							int tz = (int) Math.round((tw.minZ() + tw.maxZ()) / 2);
+							int away = 30 + (int) Math.max(tw.maxX() - tw.minX(), tw.maxZ() - tw.minZ());
+							look[0] = yaw(0, -1);
+							RealEarth.LOGGER.info("[shots] tower of {} at {},{} up to Y {} (roof {}), cap {}", plan.id, tx, tz, tw.topY(), plan.roofBaseY(),
+								tw.capRise());
+							return new BlockPos(tx, Math.max(plan.roofBaseY(), tw.topY() - 12), tz + away);
 						}
 						var inside = plan.interior();
 						if (what.equals("front")) {

@@ -1396,6 +1396,93 @@ final class SelfTest {
 					"buildings are flats, offices and shops, divided into rooms");
 			}
 
+			// Buildings as the map colours them, and towers on their roofs.
+			{
+				int coloured = 0;
+				int matched = 0;
+				int towers = 0;
+				int standing = 0;
+				java.util.Map<String, Integer> walls = new java.util.TreeMap<>();
+				java.util.Set<Long> seen = new java.util.HashSet<>();
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						if (c == null) {
+							continue;
+						}
+						LevelChunk chunk = earth.getChunk(cx, cz);
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.building[k] == 0) {
+									continue;
+								}
+								var plan = c.plans.get(c.building[k] - 1);
+								int wx = cx * 16 + x;
+								int wz = cz * 16 + z;
+								var tower = plan.towerAt(wx, wz);
+								if (tower != null && seen.add(plan.id * 31 + tower.topY())) {
+									towers++;
+									if (!chunk.getBlockState(new BlockPos(x, tower.topY() - tower.capRise(), z)).isAir()) {
+										standing++;
+									}
+								}
+								net.minecraft.world.level.block.Block wall = se.itssimple.realearth.world.Facades.wall(plan.colour);
+								if (wall == null || !seen.add(plan.id)) {
+									continue;
+								}
+								coloured++;
+								walls.merge(wall.getDescriptionId().replace("block.minecraft.", ""), 1, Integer::sum);
+								// Its wall block somewhere in its outer wall, a storey up.
+								boolean found = false;
+								for (int i = 0; i < 16 && !found; i++) {
+									for (int j = 0; j < 16 && !found; j++) {
+										int kk = ChunkTerrain.index(i, j);
+										if (c.building[kk] != 0 && c.plans.get(c.building[kk] - 1).id == plan.id) {
+											for (int dy = 1; dy <= plan.storey && !found; dy++) {
+												found = chunk.getBlockState(new BlockPos(i, plan.floorY + plan.storey + dy, j)).is(wall);
+											}
+										}
+									}
+								}
+								if (found) {
+									matched++;
+								}
+							}
+						}
+					}
+				}
+				log("map colours in 13 x 13 chunks of Stockholm: %d coloured buildings (%d built in their colour's block), walls %s; %d towers, %d standing",
+					coloured, matched, walls, towers, standing);
+				check(coloured >= 3 && matched * 10 >= coloured * 8, "buildings are built in their colours from the map (%d of %d)", matched, coloured);
+				check(towers >= 1 && standing == towers, "towers stand on the roofs of their buildings (%d of %d)", standing, towers);
+			}
+
+			// No lava lakes in the parks: in town, lava at the ground was made a pond.
+			{
+				int lava = 0;
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						if (c == null) {
+							continue;
+						}
+						LevelChunk chunk = earth.getChunk(cx, cz);
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int ground = c.topSolidY[ChunkTerrain.index(x, z)];
+								for (int y = ground - 6; y <= ground + 4; y++) {
+									if (chunk.getFluidState(new BlockPos(x, y, z)).is(net.minecraft.tags.FluidTags.LAVA)) {
+										lava++;
+									}
+								}
+							}
+						}
+					}
+				}
+				check(lava == 0, "no lava at the ground in the city (%d blocks)", lava);
+			}
+
 			// Names on signs: over shop and hall doors, and on posts at street corners.
 			{
 				int streetSigns = 0;

@@ -46,7 +46,7 @@ final class Buildings {
 	}
 
 	record Candidate(OsmWater.Building building, int tileX, int tileY, List<double[]> blockRings, List<OsmWater.Way> ways, List<OsmWater.Poi> pois,
-		List<OsmWater.Land> landuse) {
+		List<OsmWater.Land> landuse, List<OsmWater.Part> parts) {
 		/** True when this building was planned before, so neither its outline nor its ground need working out again. */
 		boolean planned() {
 			return PLANS.containsKey(BuildingPlan.idOf(tileX, tileY, building));
@@ -68,7 +68,7 @@ final class Buildings {
 				BuildingPlan known = PLANS.get(BuildingPlan.idOf(tiles.get(t)[0], tiles.get(t)[1], b));
 				if (known != null) {
 					if (known.maxX >= baseX - 1 && known.minX <= baseX + 17 && known.maxZ >= baseZ - 1 && known.minZ <= baseZ + 17) {
-						out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], known.rings, s.ways(), s.pois(), s.landuse()));
+						out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], known.rings, s.ways(), s.pois(), s.landuse(), s.parts()));
 					}
 					continue;
 				}
@@ -93,7 +93,61 @@ final class Buildings {
 				if (x1 < baseX - 1 || x0 > baseX + 17 || z1 < baseZ - 1 || z0 > baseZ + 17) {
 					continue;
 				}
-				out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], rings, s.ways(), s.pois(), s.landuse()));
+				out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], rings, s.ways(), s.pois(), s.landuse(), s.parts()));
+			}
+		}
+		return out;
+	}
+
+	/** Share of a raised part's footprint that must be over the building for it to stand on it. */
+	private static final double ON_TOP = 0.8;
+
+	/**
+	 * The raised parts of the candidate's tile that stand on it: mostly over its footprint, and starting
+	 * at least half way up it (lower down, a storey over a passage or an arcade: those are left out).
+	 */
+	static List<BuildingPlan.Raised> raised(TerrainField field, Candidate c) {
+		OsmWater.Building b = c.building();
+		double height = Double.isNaN(b.heightMeters()) ? 6 : b.heightMeters();
+		List<BuildingPlan.Raised> out = new ArrayList<>();
+		for (OsmWater.Part part : c.parts()) {
+			if (part.maxX() < b.minX() || part.minX() > b.maxX() || part.maxY() < b.minY() || part.minY() > b.maxY()
+				|| part.minMeters() < height * 0.5 || part.heightMeters() <= height) {
+				continue;
+			}
+			double nearX = c.blockRings().get(0)[0];
+			List<double[]> rings = new ArrayList<>();
+			double x0 = Double.MAX_VALUE;
+			double x1 = -Double.MAX_VALUE;
+			double z0 = Double.MAX_VALUE;
+			double z1 = -Double.MAX_VALUE;
+			for (double[] ring : part.rings()) {
+				double[] r = new double[ring.length];
+				for (int i = 0; i < ring.length; i += 2) {
+					double[] p = toBlock(field.projection(), ring[i], ring[i + 1], nearX);
+					r[i] = p[0];
+					r[i + 1] = p[1];
+					x0 = Math.min(x0, p[0]);
+					x1 = Math.max(x1, p[0]);
+					z0 = Math.min(z0, p[1]);
+					z1 = Math.max(z1, p[1]);
+				}
+				rings.add(r);
+			}
+			int inside = 0;
+			int over = 0;
+			for (int x = (int) Math.floor(x0); x <= (int) Math.ceil(x1); x++) {
+				for (int z = (int) Math.floor(z0); z <= (int) Math.ceil(z1); z++) {
+					if (BuildingPlan.contains(rings, x + 0.5, z + 0.5)) {
+						inside++;
+						if (BuildingPlan.contains(c.blockRings(), x + 0.5, z + 0.5)) {
+							over++;
+						}
+					}
+				}
+			}
+			if (inside > 0 && over >= inside * ON_TOP) {
+				out.add(new BuildingPlan.Raised(rings, part.minMeters(), part.heightMeters()));
 			}
 		}
 		return out;
@@ -177,7 +231,7 @@ final class Buildings {
 			int climate = koppen == null ? 0 : koppen.classAt(lat, lon);
 			long id = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
 			Use use = classify(field, c, centre, area);
-			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), area, field, style(climate),
+			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), c.building().colour(), raised(field, c), area, field, style(climate),
 				doors(c, lat), storeyMeters, maxFloors, use.use(), use.hall(), use.shops(), c.tileX(), c.tileY());
 			if (!t.degraded) {
 				PLANS.put(id, plan);
@@ -238,7 +292,8 @@ final class Buildings {
 						}
 						t.building[k] = (short) (p + 1);
 						t.way[k] = Ways.NONE;
-						t.roofY[k] = plan.roofBaseY() + plan.roofRise;
+						BuildingPlan.Tower tower = plan.towerAt(baseX + i - 1, baseZ + j - 1);
+						t.roofY[k] = tower != null ? Math.max(tower.topY(), plan.roofBaseY() + plan.roofRise) : plan.roofBaseY() + plan.roofRise;
 					}
 				}
 			}

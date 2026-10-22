@@ -773,8 +773,60 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 	public void applyBiomeDecoration(net.minecraft.world.level.WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
 		long started = se.itssimple.realearth.Perf.start();
 		super.applyBiomeDecoration(level, chunk, structureManager);
+		coolTownLava(level, chunk);
 		registerPointsOfInterest(level, chunk);
 		se.itssimple.realearth.Perf.stop("features", started);
+	}
+
+	/**
+	 * Vanilla's surface lava lakes and springs don't belong in a town's parks and yards. In a town (a
+	 * chunk with mapped buildings or streets), lava at the ground becomes a pond: still lava turns to
+	 * water and flowing lava goes. The chunks round this one are looked at too, as a lake started here
+	 * reaches into them. Lava out in the wild, and deep down, is left as it is.
+	 */
+	private static void coolTownLava(net.minecraft.world.level.WorldGenLevel level, ChunkAccess chunk) {
+		TerrainField field = RealEarth.terrain();
+		if (field == null) {
+			return;
+		}
+		ChunkPos centre = chunk.getPos();
+		BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+		for (int dx = -1; dx <= 1; dx++) {
+			for (int dz = -1; dz <= 1; dz++) {
+				int cx = centre.x() + dx;
+				int cz = centre.z() + dz;
+				ChunkTerrain t = level.hasChunk(cx, cz) ? field.chunkIfReady(cx, cz) : null;
+				if (t == null || !town(t)) {
+					continue;
+				}
+				ChunkAccess c = level.getChunk(cx, cz);
+				for (int x = 0; x < 16; x++) {
+					for (int z = 0; z < 16; z++) {
+						int ground = t.topSolidY[ChunkTerrain.index(x, z)];
+						for (int y = ground - 6; y <= ground + 4; y++) {
+							pos.set(cx * 16 + x, y, cz * 16 + z);
+							var fluid = c.getFluidState(pos);
+							if (fluid.is(net.minecraft.tags.FluidTags.LAVA)) {
+								level.setBlock(pos, fluid.isSource() ? Blocks.WATER.defaultBlockState() : Blocks.AIR.defaultBlockState(), 2);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/** Whether a chunk is town: mapped buildings, or streets and paths. */
+	private static boolean town(ChunkTerrain t) {
+		if (!t.plans.isEmpty()) {
+			return true;
+		}
+		for (byte w : t.way) {
+			if (w != Ways.NONE) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

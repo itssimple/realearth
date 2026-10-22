@@ -52,10 +52,18 @@ public final class OsmWater {
 
 	/**
 	 * A building footprint: rings of interleaved x,y in global z15 sample coordinates (even-odd), its
-	 * height in metres (NaN when the map doesn't say), and its bounding box. Its index in the tile is
+	 * height in metres (NaN when the map doesn't say), its colour as 0xRRGGBB (Colours.NONE when the map
+	 * doesn't say; else its own or its material's), and its bounding box. Its index in the tile is
 	 * stable, so tile and index identify it.
 	 */
-	public record Building(List<double[]> rings, double heightMeters, int index, double minX, double minY, double maxX, double maxY) {
+	public record Building(List<double[]> rings, double heightMeters, int colour, int index, double minX, double minY, double maxX, double maxY) {
+	}
+
+	/**
+	 * A raised part of a building (OSM's building:part with a min_height): a tower's upper stages, a
+	 * storey over a passage. Rings like a Building's, from minMeters up to heightMeters above the ground.
+	 */
+	public record Part(List<double[]> rings, double minMeters, double heightMeters, int colour, double minX, double minY, double maxX, double maxY) {
 	}
 
 	/**
@@ -86,11 +94,11 @@ public final class OsmWater {
 	 * false when the map has no tile or could not be fetched.
 	 */
 	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings, List<Poi> pois,
-		List<Land> landuse, List<Place> places, List<Street> streets) {
+		List<Land> landuse, List<Place> places, List<Street> streets, List<Part> parts) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
-		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
-		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -215,6 +223,7 @@ public final class OsmWater {
 		List<Land> landuse = new ArrayList<>();
 		List<Place> places = new ArrayList<>();
 		List<Street> streets = new ArrayList<>();
+		List<Part> raised = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
 			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
 				continue;
@@ -231,26 +240,32 @@ public final class OsmWater {
 				parts.add(d);
 			}
 			if (f.layer().equals("building") && f.type() == VectorTile.POLYGON) {
-				// Parts that float (render_min_height above 0) are upper storeys of something else.
+				// Parts that float (render_min_height above 0) are upper storeys of something else: kept
+				// apart, as the towers and the like of the buildings they stand on.
 				double base = f.number("render_min_height");
-				if (f.flag("hide_3d") || (!Double.isNaN(base) && base > 0.5)) {
+				if (f.flag("hide_3d")) {
+					continue;
+				}
+				if (!Double.isNaN(base) && base > 0.5) {
+					addPart(raised, parts, base, f.number("render_height"), Colours.parse(f.string("colour")));
 					continue;
 				}
 				// At this zoom the map merges all of a tile's buildings of the same height into one
 				// feature: split it back into buildings, each an outer ring with the holes after it
 				// (outer rings wind one way, holes the other).
+				int colour = Colours.parse(f.string("colour"));
 				List<double[]> current = null;
 				for (double[] ring : parts) {
 					if (current == null || signedArea(ring) > 0) {
 						if (current != null) {
-							addBuilding(buildings, current, f.number("render_height"));
+							addBuilding(buildings, current, f.number("render_height"), colour);
 						}
 						current = new ArrayList<>();
 					}
 					current.add(ring);
 				}
 				if (current != null) {
-					addBuilding(buildings, current, f.number("render_height"));
+					addBuilding(buildings, current, f.number("render_height"), colour);
 				}
 				continue;
 			}
@@ -342,7 +357,7 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets);
+		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets, raised);
 	}
 
 	/** Cities, towns, villages and their districts; not islands, countries, states or lone farms. */
@@ -422,7 +437,27 @@ public final class OsmWater {
 		}
 	}
 
-	private static void addBuilding(List<Building> buildings, List<double[]> rings, double height) {
+	private static void addPart(List<Part> raised, List<double[]> rings, double min, double height, int colour) {
+		if (Double.isNaN(height) || height <= min) {
+			return;
+		}
+		// Merged like buildings: an outer ring and its holes per part.
+		List<double[]> current = null;
+		for (double[] ring : rings) {
+			if (current == null || signedArea(ring) > 0) {
+				if (current != null) {
+					raised.add(part(current, min, height, colour));
+				}
+				current = new ArrayList<>();
+			}
+			current.add(ring);
+		}
+		if (current != null) {
+			raised.add(part(current, min, height, colour));
+		}
+	}
+
+	private static Part part(List<double[]> rings, double min, double height, int colour) {
 		double minX = Double.MAX_VALUE;
 		double minY = Double.MAX_VALUE;
 		double maxX = -Double.MAX_VALUE;
@@ -435,7 +470,23 @@ public final class OsmWater {
 				maxY = Math.max(maxY, ring[i + 1]);
 			}
 		}
-		buildings.add(new Building(rings, height, buildings.size(), minX, minY, maxX, maxY));
+		return new Part(rings, min, height, colour, minX, minY, maxX, maxY);
+	}
+
+	private static void addBuilding(List<Building> buildings, List<double[]> rings, double height, int colour) {
+		double minX = Double.MAX_VALUE;
+		double minY = Double.MAX_VALUE;
+		double maxX = -Double.MAX_VALUE;
+		double maxY = -Double.MAX_VALUE;
+		for (double[] ring : rings) {
+			for (int i = 0; i < ring.length; i += 2) {
+				minX = Math.min(minX, ring[i]);
+				maxX = Math.max(maxX, ring[i]);
+				minY = Math.min(minY, ring[i + 1]);
+				maxY = Math.max(maxY, ring[i + 1]);
+			}
+		}
+		buildings.add(new Building(rings, height, colour, buildings.size(), minX, minY, maxX, maxY));
 	}
 
 	/** Surveyor's formula, in tile orientation (y down): positive for an outer ring, as vector tiles define it. */
