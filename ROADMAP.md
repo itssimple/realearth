@@ -18,23 +18,24 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 4. **Real day length and sun.** Sunrise and sunset from latitude and today's date: midnight sun in Kiruna in
    June, six-hour days in Stockholm in December. Optionally seasonal snow cover.
 5. **Spawn safety.** If the start point is in the sea, spawn on the nearest land.
-6. **Towns that feel lived in.** Done: real footprints as furnished village houses; house chests roll the
-   village house loot of their climate, storeroom barrels `realearth:chests/storeroom`, so Lootr makes them
-   per player; some furnaces keep fuel, some bookshelves are chiseled ones with books. Next, in this order:
-   1. **What each building is.** OpenFreeMap's tiles also carry `poi` (shop, amenity, place of worship...) and
-      `landuse` (residential, industrial, retail...) layers, not read yet. A point inside a footprint names
-      the building: a bakery gets smokers and bread barrels and a butcher's loot, a library shelves, a lectern
-      and a librarian, a church pews and a bell, a hardware shop a smithy; industrial land gets warehouses.
-      Each type its own loot table. Signs by the door with the shop's real name.
-   2. **Places from the map.** "Entering Stockholm" on screen at town edges (the `place` layer); street
-      name signs at junctions; parks with fountains and benches, cemeteries, allotments with crops and
-      animals, marketplaces with stalls and a wandering trader, stations with minecarts on the platform,
-      harbours with boats; cartographers' chests holding a map of their own town.
-   3. **More villagers, near the player.** Keep a number of villagers in the town around each player,
-      instead of a few placed for good at generation; those far away and never traded with go. More beds
-      per home, so cats come too; children; an iron golem at bell squares.
-   4. **Rooms and details.** Interior walls into rooms, tables and chairs, carpets, kitchens; chimney smoke
-      (a campfire under a chimney on some roofs); gardens, hedges and benches; trees along streets.
+6. **Towns that feel lived in.** Done: loot in chests, pantries and shop stock, Lootr-ready; buildings divided
+   by what the map says they are (flats in stairwell sections with rooms, shops in ground-floor units, halls,
+   offices, warehouses, houses), with turning stairs, a door in every wall and furniture by room. Next:
+   1. **Places from the map.** "Entering Stockholm" on screen at town edges (the `place` layer); street
+      name signs at junctions and shop names by their doors (a sign's text needs setting once the chunk is
+      in the world: its block entity has no level while generating); parks with fountains and benches,
+      cemeteries, allotments with crops and animals, marketplaces with stalls and a wandering trader,
+      stations with minecarts on the platform, harbours with boats; cartographers' chests holding a map of
+      their own town.
+   2. **More villagers, near the player.** Keep a number of villagers in the town around each player,
+      instead of a few placed for good at generation; those far away and never traded with go. Cats where
+      there are beds enough; children; an iron golem at bell squares.
+   3. **Rooms and details.** Chairs at tables, chimney smoke (a campfire under a chimney on some roofs),
+      gardens, hedges and benches, trees along streets; shops on upper floors where the map gives a level.
+   4. **Interiors that follow the building.** Layouts are on the block grid, so a building at an angle has
+      stepped inner walls, and about a third of multi-storey buildings find no straight bit of outer wall
+      for a stairwell's street door and get a ladder instead. Laying out along the building's own axis fixes
+      both.
    Also landmarks, and buildings in Distant Horizons' far terrain.
 7. **Villages that follow the streets**, where buildings aren't mapped: city villages are vanilla jigsaw villages
    on a grid; placing their houses along the real road network would fit better.

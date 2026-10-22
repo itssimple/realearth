@@ -46,17 +46,31 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   roofs in the far north, sandstone in deserts, acacia and terracotta in the tropics.
   - Storeys are at least 4.5 m (5 blocks) high; their number comes from the building's real height at about
     3 m each, up to 10.
-  - Windows, corner posts, a front door towards the nearest street and more doors on long walls, ladders
-    between storeys; small buildings get hipped roofs, large ones flat roofs with a parapet.
-  - Furnished: beds, chests, crafting tables, furnaces, barrels, bookshelves, flower pots, lanterns, and villager
-    job blocks. A villager moves into about one chunk of town in twenty and takes up the trade it finds: enough
-    to feel lived in, few enough that a city doesn't slow the server down. Beds, chests and furnaces are kept
-    rare for the same reason (they are drawn as models or tick).
-  - **Loot.** House chests hold what a village house's chest of the same climate holds, and storeroom barrels
-    household goods (`realearth:chests/storeroom`, which a datapack can change); both fill when first opened.
-    With [Lootr](https://modrinth.com/mod/lootr) installed each player gets their own. Barrels that are a
-    villager's job block stay empty. Some furnaces have fuel left in them, and some bookshelves are chiseled
-    ones with a few books.
+  - Windows, corner posts; small buildings get hipped roofs, large ones flat roofs with a parapet.
+  - **What each building is**, from the map's points of interest and land use (OpenFreeMap's `poi` and `landuse`
+    layers):
+    - **Flats**: cut into stairwell sections, each with a street door into its landing and a turning stair that
+      climbs a storey round a half landing. Two flats or so open off each landing, divided by walls into a hall,
+      living room, kitchen, bedrooms and sometimes a bathroom, a door in every wall.
+    - **Shops**: a shop on the map takes the ground-floor flat nearest its point, as one room with its own street
+      door, walled off from the stairwell; the flats above are as on every other floor. Bakeries, grocers,
+      butchers, clothes shops, bookshops, hardware stores, cafés and restaurants, pharmacies, florists and
+      others each have their own stock and their own job block.
+    - **Halls**: a church (one tall nave with pews and an altar), library, school or supermarket that fills a big
+      building gets it to itself.
+    - **Offices** on commercial land, **warehouses** (one tall floor of stores) on industrial land, and **houses**
+      where a home is small: one household, with stairs if there is room, else a ladder.
+  - Furnished by room: a bed in every bedroom, a stove, sink and worktop in kitchens, a table and rug, bookshelves,
+    flower pots, lanterns, and villager job blocks. Beds, chests and barrels are block entities (drawn as models
+    or kept in memory), so only about one bed in ten is a real bed, the rest made up of wool under a blanket,
+    and chests and barrels are kept few. A villager moves into about one chunk of town in twenty, into a real
+    bed, and takes up the trade it finds: enough to feel lived in, few enough that a city doesn't slow the
+    server down.
+  - **Loot.** House chests hold what a village house's chest of the same climate holds, pantry barrels household
+    goods (`realearth:chests/storeroom`), shop barrels the shop's stock (`realearth:chests/shop_bakery` and the
+    like); a datapack can change any of them. All fill when first opened. With
+    [Lootr](https://modrinth.com/mod/lootr) installed each player gets their own. Barrels that are a villager's
+    job block stay empty. Some stoves have fuel left in them, and some bookshelves are chiseled ones with books.
   - Between them: wells, farm plots, bells on their posts, hay stores, and street lamps along the streets.
   - Each building stands level, on the ground under its whole footprint: a foundation on the low side, dug in on
     the high side.

@@ -27,18 +27,22 @@ import net.minecraft.world.level.storage.loot.BuiltInLootTables;
 import net.minecraft.world.level.storage.loot.LootTable;
 import se.itssimple.realearth.terrain.BuildingPlan;
 import se.itssimple.realearth.terrain.ChunkTerrain;
+import se.itssimple.realearth.terrain.Interior;
 
 /**
- * Builds a chunk's share of its buildings: foundation, floors, walls with windows and corner posts, a
- * front door to the street, ladders between storeys, a roof, and furniture -- beds, chests, crafting
- * tables, furnaces, a villager job block, bookshelves, lanterns.
+ * Builds a chunk's share of its buildings: foundation, floors, outer walls with windows and corner
+ * posts, a roof; and inside, as the building's {@link Interior} lays it out, the walls between flats and
+ * rooms with their doors, street doors into stairwells and shops, turning stairs between storeys, and
+ * furniture by room -- beds, stoves, pantries, tables, rugs, bookshelves, a villager's job block, shop
+ * goods -- with lanterns under the ceilings.
  *
- * Chests and storeroom barrels get a loot table rather than items, so they fill when first opened, the
- * way village chests do; Lootr, when installed, turns them into a chest per player. Barrels that are a
- * villager's job block stay empty.
+ * Chests, pantry barrels and shop stock get a loot table rather than items, so they fill when first
+ * opened, the way village chests do; Lootr, when installed, turns them into a chest per player. Barrels
+ * that are a villager's job block stay empty.
  *
  * Everything is decided from the building's plan and the block position alone, so neighbouring chunks
- * agree on the parts of a building they share.
+ * agree on the parts of a building they share: a bed or a flight of stairs across a chunk border is
+ * built half by each.
  */
 final class BuildingPainter {
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
@@ -56,14 +60,22 @@ final class BuildingPainter {
 		Blocks.SMITHING_TABLE, Blocks.STONECUTTER, Blocks.GRINDSTONE, Blocks.CAULDRON, Blocks.BARREL, Blocks.SMOKER};
 	private static final Block[] FLOWERS = {Blocks.POTTED_POPPY, Blocks.POTTED_DANDELION, Blocks.POTTED_BLUE_ORCHID, Blocks.POTTED_FERN,
 		Blocks.POTTED_AZURE_BLUET, Blocks.POTTED_OXEYE_DAISY};
+	private static final Block[] RUGS = {Blocks.RED_CARPET, Blocks.BLUE_CARPET, Blocks.GREEN_CARPET, Blocks.BROWN_CARPET, Blocks.LIGHT_GRAY_CARPET,
+		Blocks.CYAN_CARPET, Blocks.YELLOW_CARPET, Blocks.WHITE_CARPET};
+	private static final Block[] WOOL = {Blocks.WHITE_WOOL, Blocks.RED_WOOL, Blocks.BLUE_WOOL, Blocks.LIGHT_GRAY_WOOL, Blocks.BLACK_WOOL, Blocks.BROWN_WOOL};
 
 	/** Household goods in the storerooms' barrels: food, fuel and odds and ends. A datapack can change it. */
-	private static final ResourceKey<LootTable> STOREROOM = ResourceKey.create(Registries.LOOT_TABLE,
-		Identifier.fromNamespaceAndPath("realearth", "chests/storeroom"));
+	private static final ResourceKey<LootTable> STOREROOM = loot("chests/storeroom");
 	/** Share of bookshelves that are chiseled ones, holding a few books. */
-	private static final double CHISELED = 0.25;
+	private static final double CHISELED = 0.1;
+	/** Share of shop stock that is a barrel of it, the rest set out for show; a block entity each. */
+	private static final double STOCK_BARRELS = 0.25;
 	/** Share of furnaces with some fuel left in them. */
 	private static final double FUELLED = 0.4;
+
+	private static ResourceKey<LootTable> loot(String path) {
+		return ResourceKey.create(Registries.LOOT_TABLE, Identifier.fromNamespaceAndPath("realearth", path));
+	}
 
 	/** A house chest holds what a village house's chest of the same climate holds. */
 	private static ResourceKey<LootTable> houseLoot(BuildingPlan.Style style) {
@@ -73,6 +85,36 @@ final class BuildingPainter {
 			case SNOWY -> BuiltInLootTables.VILLAGE_SNOWY_HOUSE;
 			case DESERT -> BuiltInLootTables.VILLAGE_DESERT_HOUSE;
 			case SAVANNA -> BuiltInLootTables.VILLAGE_SAVANNA_HOUSE;
+		};
+	}
+
+	/** What a shop's stock holds: its own table (realearth:chests/shop_*), a datapack can change them. */
+	private static ResourceKey<LootTable> stockLoot(BuildingPlan.Trade trade) {
+		if (trade == null) {
+			return STOREROOM;
+		}
+		return switch (trade) {
+			case CHURCH -> BuiltInLootTables.VILLAGE_TEMPLE;
+			case MARKET -> loot("chests/shop_grocery");
+			case LIBRARY, SCHOOL -> loot("chests/shop_books");
+			case OFFICE -> STOREROOM;
+			default -> loot("chests/shop_" + trade.name().toLowerCase(java.util.Locale.ROOT));
+		};
+	}
+
+	/** The workstation of whoever works in a shop or hall: the trade a villager takes up there. */
+	private static Block job(BuildingPlan.Trade trade) {
+		if (trade == null) {
+			return Blocks.BLAST_FURNACE;
+		}
+		return switch (trade) {
+			case BAKERY, GROCERY, FLOWERS, MARKET -> Blocks.COMPOSTER;
+			case BUTCHER, FOOD -> Blocks.SMOKER;
+			case CLOTHES -> Blocks.LOOM;
+			case BOOKS, LIBRARY, SCHOOL -> Blocks.LECTERN;
+			case HARDWARE -> Blocks.SMITHING_TABLE;
+			case PHARMACY, CHURCH -> Blocks.BREWING_STAND;
+			case GENERAL, OFFICE -> Blocks.CARTOGRAPHY_TABLE;
 		};
 	}
 
@@ -120,6 +162,27 @@ final class BuildingPainter {
 				yield new Palette(state(walls[v % walls.length]), state(Blocks.OAK_LOG), state(Blocks.OAK_PLANKS), state(Blocks.COBBLESTONE), roof,
 					state(roofFull), state(Blocks.SMOOTH_STONE), state(Blocks.COBBLESTONE), glass, Blocks.OAK_DOOR);
 			}
+		};
+	}
+
+	/** Walls inside: plaster-white in towns, timber in houses. */
+	private static BlockState partition(BuildingPlan p) {
+		boolean big = p.floors >= 3 || p.use != BuildingPlan.Use.HOUSE;
+		return switch (p.style) {
+			case DESERT -> state(Blocks.SMOOTH_SANDSTONE);
+			case SAVANNA -> state(big ? Blocks.WHITE_TERRACOTTA : Blocks.ACACIA_PLANKS);
+			case TAIGA, SNOWY -> state(big ? Blocks.WHITE_TERRACOTTA : Blocks.SPRUCE_PLANKS);
+			case PLAINS -> state(big ? Blocks.WHITE_TERRACOTTA : Blocks.BIRCH_PLANKS);
+		};
+	}
+
+	/** The steps of stairs inside, pews too: the floor's wood. */
+	private static Block steps(BuildingPlan p) {
+		return switch (p.style) {
+			case DESERT -> Blocks.SMOOTH_SANDSTONE_STAIRS;
+			case SAVANNA -> Blocks.ACACIA_STAIRS;
+			case TAIGA, SNOWY -> Blocks.SPRUCE_STAIRS;
+			case PLAINS -> Blocks.OAK_STAIRS;
 		};
 	}
 
@@ -188,68 +251,11 @@ final class BuildingPainter {
 		return false;
 	}
 
-	/** For a room column next to a wall: the direction of that wall, or -1. */
-	private static int wallSide(boolean[] in, int x, int z) {
-		if (!in(in, x, z) || isWall(in, x, z)) {
-			return -1;
-		}
-		for (int d = 0; d < 4; d++) {
-			if (isWall(in, x + DX[d], z + DZ[d])) {
-				return d;
-			}
-		}
-		return -1;
-	}
-
-	private static final double LADDER = 0.025;
-
-	private static boolean isLadder(BuildingPlan p, boolean[] in, int x, int z, int wx, int wz) {
-		return p.floors > 1 && wallSide(in, x, z) >= 0 && p.hash(wx, 0, wz, 2) < LADDER && !nearDoor(p, wx, wz);
-	}
-
-	private static boolean nearDoor(BuildingPlan p, int wx, int wz) {
-		return p.nearDoor(wx, wz);
-	}
-
-	private enum Item { NONE, BED, CHEST, CRAFTING, FURNACE, BARREL, BOOKSHELF, JOB, FLOWER }
-
-	/** What stands against the wall at a room column on a floor. */
-	private static Item item(BuildingPlan p, boolean[] in, int x, int z, int wx, int wz, int floor) {
-		if (wallSide(in, x, z) < 0 || isLadder(p, in, x, z, wx, wz) || (floor == 0 && nearDoor(p, wx, wz))) {
-			return Item.NONE;
-		}
-		// Beds and chests are drawn as animated models and furnaces tick, so they are kept few: a city has
-		// thousands of rooms in view. Plain blocks (barrels, bookshelves, crafting tables) carry the rest.
-		double h = p.hash(wx, floor, wz, 1);
-		if (h < 0.012) {
-			return Item.BED;
-		}
-		if (h < 0.018) {
-			return Item.CHEST;
-		}
-		if (h < 0.05) {
-			return Item.CRAFTING;
-		}
-		if (h < 0.058) {
-			return Item.FURNACE;
-		}
-		if (h < 0.10) {
-			return Item.BARREL;
-		}
-		if (h < 0.16) {
-			return Item.BOOKSHELF;
-		}
-		if (h < 0.18) {
-			return Item.JOB;
-		}
-		if (h < 0.22) {
-			return Item.FLOWER;
-		}
-		return Item.NONE;
-	}
-
 	private static void build(ChunkAccess chunk, ChunkTerrain t, BuildingPlan p, Palette pal, boolean[] in, int baseX, int baseZ, int[] top,
 		List<int[]> beds) {
+		Interior inside = p.interior();
+		BlockState partition = partition(p);
+		Block steps = steps(p);
 		int floorY = p.floorY;
 		int storey = p.storey;
 		int roofBase = p.roofBaseY();
@@ -267,9 +273,8 @@ final class BuildingPainter {
 				boolean eastWest = !in(in, x - 1, z) || !in(in, x + 1, z);
 				boolean northSouth = !in(in, x, z - 1) || !in(in, x, z + 1);
 				boolean corner = wall && eastWest && northSouth;
-				int doorFacing = p.doorAt(wx, wz);
-				boolean door = doorFacing >= 0;
-				boolean ladder = isLadder(p, in, x, z, wx, wz);
+				Interior.Stairs shaft = wall ? null : inside.shaftAt(wx, wz);
+				int ladder = wall ? -1 : inside.ladderAt(wx, wz);
 				int highest = floorY;
 
 				// Foundation up from the ground (or the water), and the ground floor.
@@ -280,32 +285,42 @@ final class BuildingPainter {
 
 				for (int f = 0; f < p.floors; f++) {
 					int base = floorY + f * storey;
+					byte code = inside.code(wx, wz, f);
+					Interior.Door door = inside.doorAt(wx, wz, f);
 					for (int dy = 1; dy < storey; dy++) {
 						int y = base + dy;
 						BlockState s;
 						if (wall) {
-							if (door && f == 0 && dy <= 2) {
-								s = doorHalf(pal.door, doorFacing, dy == 1);
-							} else if (!corner && !door && (dy == 2 || dy == 3) && window(wx, wz, eastWest)) {
+							if (door != null && door.entrance() && dy <= 2) {
+								s = doorHalf(pal.door, door.facing(), dy == 1);
+							} else if (!corner && door == null && (dy == 2 || dy == 3) && window(wx, wz, eastWest)) {
 								s = pane(pal.window, eastWest);
 							} else {
 								s = corner ? pal.corner : pal.wall;
 							}
-						} else if (ladder) {
-							s = ladder(wallSide(in, x, z));
+						} else if (shaft != null) {
+							s = step(inside.stepAt(shaft, wx, wz, y, floorY, storey, p.floors), steps, pal.floor);
+						} else if (code == Interior.WALL) {
+							s = door != null && dy <= 2 ? doorHalf(pal.door, door.facing(), dy == 1) : partition;
+						} else if (ladder >= 0) {
+							s = ladder(ladder);
 						} else {
 							s = AIR;
 						}
 						set(chunk, pos, x, y, z, s);
 					}
 					if (f < p.floors - 1) {
-						set(chunk, pos, x, base + storey, z, ladder ? ladder(wallSide(in, x, z)) : wall ? pal.wall : pal.floor);
+						int y = base + storey;
+						BlockState s = wall ? pal.wall
+							: shaft != null ? step(inside.stepAt(shaft, wx, wz, y, floorY, storey, p.floors), steps, pal.floor)
+							: ladder >= 0 ? ladder(ladder) : pal.floor;
+						set(chunk, pos, x, y, z, s);
 					}
 				}
 
 				// Roof.
 				if (p.roofRise == 0) {
-					set(chunk, pos, x, roofBase, z, wall ? pal.trim : ladder ? ladder(wallSide(in, x, z)) : pal.flatRoof);
+					set(chunk, pos, x, roofBase, z, wall ? pal.trim : pal.flatRoof);
 					highest = roofBase;
 					if (wall) {
 						set(chunk, pos, x, roofBase + 1, z, pal.trim);
@@ -320,6 +335,17 @@ final class BuildingPainter {
 					int dir = uphill(p, wx, wz);
 					BlockState roof = level >= p.roofRise || dir < 0 ? pal.roofFull : with(state(pal.stairs), BlockStateProperties.HORIZONTAL_FACING, DIRS[dir]);
 					set(chunk, pos, x, roofBase + Math.max(level, 1), z, roof);
+					// Where the next column's roof is two or more blocks lower (a wall at a slant), close
+					// the step under this one, or the roof has a gap and its blocks hang alone.
+					int lowest = level;
+					for (int d = 0; d < 4; d++) {
+						if (p.contains(wx + DX[d], wz + DZ[d])) {
+							lowest = Math.min(lowest, (int) Math.min(p.roofRise, Math.floor(p.edgeDistance(wx + DX[d], wz + DZ[d]))));
+						}
+					}
+					for (int y = roofBase + Math.max(1, lowest + 1); y < roofBase + Math.max(level, 1); y++) {
+						set(chunk, pos, x, y, z, pal.roofFull);
+					}
 					highest = roofBase + Math.max(level, 1);
 				}
 				// Whatever ground stood above the building is dug away.
@@ -330,7 +356,7 @@ final class BuildingPainter {
 			}
 		}
 
-		// Furniture, floor by floor, against the walls; and lanterns under the ceilings.
+		// Furniture, floor by floor, as the rooms want it; and lanterns under the ceilings.
 		for (int f = 0; f < p.floors; f++) {
 			int y = floorY + f * storey + 1;
 			int ceiling = floorY + (f + 1) * storey;
@@ -341,65 +367,29 @@ final class BuildingPainter {
 					}
 					int wx = baseX + x;
 					int wz = baseZ + z;
-					if (Math.floorMod(wx, 6) == 3 && Math.floorMod(wz, 6) == 3 && !isLadder(p, in, x, z, wx, wz)) {
-						set(chunk, pos, x, ceiling - 1, z, with(state(Blocks.LANTERN), BlockStateProperties.HANGING, true));
-					}
-					Item item = item(p, in, x, z, wx, wz, f);
-					if (item == Item.NONE) {
+					byte code = inside.code(wx, wz, f);
+					if (code != Interior.ROOM && code != Interior.LANDING || inside.ladderAt(wx, wz) >= 0) {
 						continue;
 					}
-					int side = wallSide(in, x, z);
-					Direction away = DIRS[(side + 2) % 4];
-					switch (item) {
-						case BED -> {
-							int fx = x - DX[side];
-							int fz = z - DZ[side];
-							if (fx < 0 || fx > 15 || fz < 0 || fz > 15 || !in(in, fx, fz) || isWall(in, fx, fz)
-								|| item(p, in, fx, fz, baseX + fx, baseZ + fz, f) != Item.NONE || isLadder(p, in, fx, fz, baseX + fx, baseZ + fz)
-								|| (f == 0 && nearDoor(p, baseX + fx, baseZ + fz))) {
-								continue;
-							}
-							Block bed = BEDS[(int) (p.hash(0, f, 0, 5) * BEDS.length)];
-							Direction head = DIRS[side];
-							set(chunk, pos, x, y, z, with(with(state(bed), BlockStateProperties.HORIZONTAL_FACING, head), BlockStateProperties.BED_PART, BedPart.HEAD));
-							set(chunk, pos, fx, y, fz, with(with(state(bed), BlockStateProperties.HORIZONTAL_FACING, head), BlockStateProperties.BED_PART, BedPart.FOOT));
-							beds.add(new int[] {baseX + fx, y, baseZ + fz});
-						}
-						case CHEST -> loot(set(chunk, pos, x, y, z, with(state(Blocks.CHEST), BlockStateProperties.HORIZONTAL_FACING, away)), houseLoot(p.style),
-							p, wx, y, wz);
-						case CRAFTING -> set(chunk, pos, x, y, z, state(Blocks.CRAFTING_TABLE));
-						case FURNACE -> {
-							BlockEntity furnace = set(chunk, pos, x, y, z, with(state(Blocks.FURNACE), BlockStateProperties.HORIZONTAL_FACING, away));
-							double fuel = p.hash(wx, f, wz, 9);
-							if (furnace instanceof AbstractFurnaceBlockEntity fe && fuel < FUELLED) {
-								// Slot 1 is the fuel.
-								fe.setItem(1, new ItemStack(fuel < FUELLED / 2 ? Items.COAL : Items.CHARCOAL, 1 + (int) (fuel / FUELLED * 8) % 4));
-							}
-						}
-						case BARREL -> loot(set(chunk, pos, x, y, z, with(state(Blocks.BARREL), BlockStateProperties.FACING, Direction.UP)), STOREROOM, p, wx, y, wz);
-						case BOOKSHELF -> {
-							bookshelf(chunk, pos, x, y, z, away, p.hash(wx, f, wz, 8));
-							if (p.storey > 3) {
-								bookshelf(chunk, pos, x, y + 1, z, away, p.hash(wx, f + 64, wz, 8));
-							}
-						}
-						case JOB -> {
-							Block job = JOBS[(int) (p.hash(wx, f, wz, 6) * JOBS.length)];
-							set(chunk, pos, x, y, z, with(state(job), BlockStateProperties.HORIZONTAL_FACING, away));
-						}
-						case FLOWER -> set(chunk, pos, x, y, z, state(FLOWERS[(int) (p.hash(wx, f, wz, 7) * FLOWERS.length)]));
-						default -> {
-						}
+					if (Math.floorMod(wx, 6) == 3 && Math.floorMod(wz, 6) == 3) {
+						set(chunk, pos, x, ceiling - 1, z, with(state(Blocks.LANTERN), BlockStateProperties.HANGING, true));
+					}
+					Interior.Placed placed = inside.placedAt(wx, wz, f);
+					if (placed != null) {
+						furnish(chunk, pos, x, y, z, wx, wz, f, p, inside, placed, steps, beds);
 					}
 				}
 			}
 		}
 
-		// A step up to the front door, or a cut down to it, from the street side.
-		for (int[] d : p.doors) {
-			int ox = d[0] + DX[d[2]] - baseX;
-			int oz = d[1] + DZ[d[2]] - baseZ;
-			if (ox >= 0 && ox < 16 && oz >= 0 && oz < 16 && !in(in, ox, oz)) {
+		// A step up to each street door, or a cut down to it, from the street side.
+		for (Interior.Door d : inside.doors) {
+			if (!d.entrance()) {
+				continue;
+			}
+			int ox = d.x() + DX[d.facing()] - baseX;
+			int oz = d.z() + DZ[d.facing()] - baseZ;
+			if (ox >= 0 && ox < 16 && oz >= 0 && oz < 16 && !in(in, ox, oz) && in(in, d.x() - baseX, d.z() - baseZ)) {
 				int k = ChunkTerrain.index(ox, oz);
 				int ground = t.topSolidY[k];
 				for (int y = ground + 1; y <= floorY; y++) {
@@ -411,6 +401,110 @@ final class BuildingPainter {
 				top[oz * 16 + ox] = Math.max(top[oz * 16 + ox], floorY);
 			}
 		}
+	}
+
+	/** One thing in a room, standing on the floor at y. */
+	private static void furnish(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, int wx, int wz, int f, BuildingPlan p,
+		Interior inside, Interior.Placed placed, Block steps, List<int[]> beds) {
+		Direction away = DIRS[placed.facing()];
+		Interior.Room room = inside.roomAt(wx, wz, f);
+		BuildingPlan.Trade trade = room == null ? null : room.trade;
+		double roll = placed.roll();
+		switch (placed.item()) {
+			case BED -> {
+				int colour = (int) (p.hash(room == null ? 0 : room.id, f, 0, 5) * BEDS.length);
+				// The head stands against the wall (facing it), the foot one block out.
+				boolean foot = roll < 0;
+				double look = foot ? -1 - roll : roll;
+				if (look >= Interior.REAL_BED) {
+					// Made up of wool, under a blanket: a bed to look at, not a block entity.
+					set(chunk, pos, x, y, z, state(foot ? WOOL[0] : Blocks.WHITE_WOOL));
+					set(chunk, pos, x, y + 1, z, state(foot ? RUGS[colour % RUGS.length] : Blocks.WHITE_CARPET));
+					break;
+				}
+				Direction head = foot ? DIRS[placed.facing()] : DIRS[(placed.facing() + 2) % 4];
+				set(chunk, pos, x, y, z, with(with(state(BEDS[colour]), BlockStateProperties.HORIZONTAL_FACING, head), BlockStateProperties.BED_PART,
+					foot ? BedPart.FOOT : BedPart.HEAD));
+				if (foot) {
+					beds.add(new int[] {wx, y, wz});
+				}
+			}
+			case CHEST -> loot(set(chunk, pos, x, y, z, with(state(Blocks.CHEST), BlockStateProperties.HORIZONTAL_FACING, away)),
+				trade == BuildingPlan.Trade.CHURCH ? BuiltInLootTables.VILLAGE_TEMPLE : houseLoot(p.style), p, wx, y, wz);
+			case BARREL -> loot(set(chunk, pos, x, y, z, with(state(Blocks.BARREL), BlockStateProperties.FACING, Direction.UP)), STOREROOM, p, wx, y, wz);
+			case STOCK -> stock(chunk, pos, x, y, z, wx, wz, p, trade, roll, away);
+			case CRATE -> {
+				// Stores two high: hay and timber mostly, a barrel of goods now and then.
+				if (roll < STOCK_BARRELS / 2) {
+					loot(set(chunk, pos, x, y, z, with(state(Blocks.BARREL), BlockStateProperties.FACING, Direction.UP)), STOREROOM, p, wx, y, wz);
+				} else {
+					set(chunk, pos, x, y, z, state(roll < 0.6 ? Blocks.HAY_BLOCK : Blocks.STRIPPED_SPRUCE_LOG));
+				}
+				set(chunk, pos, x, y + 1, z, state(roll < 0.4 ? Blocks.HAY_BLOCK : Blocks.STRIPPED_OAK_LOG));
+			}
+			case CRAFTING -> set(chunk, pos, x, y, z, state(Blocks.CRAFTING_TABLE));
+			case FURNACE, SMOKER -> {
+				BlockEntity furnace = set(chunk, pos, x, y, z, with(state(placed.item() == Interior.Item.FURNACE ? Blocks.FURNACE : Blocks.SMOKER),
+					BlockStateProperties.HORIZONTAL_FACING, away));
+				if (furnace instanceof AbstractFurnaceBlockEntity fe && roll < FUELLED) {
+					// Slot 1 is the fuel.
+					fe.setItem(1, new ItemStack(roll < FUELLED / 2 ? Items.COAL : Items.CHARCOAL, 1 + (int) (roll / FUELLED * 8) % 4));
+				}
+			}
+			case BOOKSHELF -> {
+				bookshelf(chunk, pos, x, y, z, away, p.hash(wx, f, wz, 8));
+				if (p.storey > 3) {
+					bookshelf(chunk, pos, x, y + 1, z, away, p.hash(wx, f + 64, wz, 8));
+				}
+			}
+			case JOB -> {
+				Block job = room != null && (room.kind == Interior.Kind.SHOP || room.kind == Interior.Kind.HALLROOM) ? job(trade)
+					: JOBS[(int) (p.hash(wx, f, wz, 6) * JOBS.length)];
+				set(chunk, pos, x, y, z, with(state(job), BlockStateProperties.HORIZONTAL_FACING, away));
+			}
+			case FLOWER -> set(chunk, pos, x, y, z, state(FLOWERS[(int) (p.hash(wx, f, wz, 7) * FLOWERS.length)]));
+			case TABLE -> {
+				set(chunk, pos, x, y, z, state(Blocks.OAK_FENCE));
+				set(chunk, pos, x, y + 1, z, state(Blocks.OAK_PRESSURE_PLATE));
+			}
+			case RUG -> set(chunk, pos, x, y, z, state(RUGS[(int) (roll * RUGS.length)]));
+			case CAULDRON -> set(chunk, pos, x, y, z, state(Blocks.CAULDRON));
+			case PEW -> set(chunk, pos, x, y, z, with(state(steps), BlockStateProperties.HORIZONTAL_FACING, DIRS[placed.facing()]));
+			case ALTAR -> set(chunk, pos, x, y, z, state(Blocks.BREWING_STAND));
+		}
+	}
+
+	/** Shop goods: mostly barrels of its stock, with what the trade shows off between them. */
+	private static void stock(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, int wx, int wz, BuildingPlan p,
+		BuildingPlan.Trade trade, double roll, Direction away) {
+		if (roll < STOCK_BARRELS || trade == null) {
+			loot(set(chunk, pos, x, y, z, with(state(Blocks.BARREL), BlockStateProperties.FACING, Direction.UP)), stockLoot(trade), p, wx, y, wz);
+			return;
+		}
+		// What the trade sets out, none of it a block entity.
+		double t = (roll - STOCK_BARRELS) / (1 - STOCK_BARRELS);
+		BlockState show = switch (trade) {
+			case GROCERY, MARKET -> state(t < 0.4 ? Blocks.MELON : t < 0.7 ? Blocks.PUMPKIN : Blocks.HAY_BLOCK);
+			case BAKERY -> state(t < 0.6 ? Blocks.HAY_BLOCK : Blocks.CAKE);
+			case CLOTHES -> state(WOOL[(int) (t * WOOL.length) % WOOL.length]);
+			case BOOKS, LIBRARY, SCHOOL -> state(Blocks.BOOKSHELF);
+			case FLOWERS -> state(FLOWERS[(int) (t * FLOWERS.length) % FLOWERS.length]);
+			case HARDWARE -> state(t < 0.5 ? Blocks.GRINDSTONE : t < 0.8 ? Blocks.STONECUTTER : Blocks.ANVIL);
+			case PHARMACY -> state(t < 0.5 ? Blocks.CAULDRON : Blocks.FLOWER_POT);
+			case BUTCHER -> state(t < 0.5 ? Blocks.HAY_BLOCK : Blocks.CAULDRON);
+			case FOOD -> state(t < 0.5 ? Blocks.CRAFTING_TABLE : Blocks.CAULDRON);
+			default -> state(t < 0.5 ? Blocks.BOOKSHELF : Blocks.CRAFTING_TABLE);
+		};
+		set(chunk, pos, x, y, z, with(show, BlockStateProperties.HORIZONTAL_FACING, away));
+	}
+
+	/** A block of a stair shaft. */
+	private static BlockState step(Interior.Step step, Block steps, BlockState floor) {
+		return switch (step.kind()) {
+			case Interior.Step.STAIR -> with(state(steps), BlockStateProperties.HORIZONTAL_FACING, DIRS[step.facing()]);
+			case Interior.Step.SOLID -> floor;
+			default -> AIR;
+		};
 	}
 
 	/** Windows two of every three blocks along a wall, two blocks tall. */

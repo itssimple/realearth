@@ -14,6 +14,30 @@ import se.itssimple.realearth.osm.OsmWater;
 public final class BuildingPlan {
 	public enum Style { PLAINS, TAIGA, SNOWY, DESERT, SAVANNA }
 
+	/** What a building is used for, which decides how it is laid out inside (see {@link Interior}). */
+	public enum Use {
+		/** A small home: one household, its rooms off a hall. */
+		HOUSE,
+		/** Stairwells with flats off each landing; shops in ground-floor units where the map has them. */
+		FLATS,
+		/** Stairwells with open office floors. */
+		OFFICES,
+		/** One trade fills the building: a church, library, school, market. */
+		HALL,
+		/** One tall open floor: industry, storage. */
+		WAREHOUSE
+	}
+
+	/**
+	 * What a shop sells, or what a hall is: its furniture, its loot, and the trade of whoever works
+	 * there. The last four fill a whole building when it is big enough.
+	 */
+	public enum Trade { BAKERY, GROCERY, BUTCHER, CLOTHES, BOOKS, HARDWARE, FOOD, PHARMACY, FLOWERS, GENERAL, OFFICE, CHURCH, LIBRARY, SCHOOL, MARKET }
+
+	/** A shop from the map inside the building: where its point is (block coordinates), what it is, its name or null. */
+	public record Shop(int x, int z, Trade trade, String name) {
+	}
+
 	/** Stable identity: map tile and index, for everything chosen "at random" in this building. */
 	public final long id;
 	/** Rings of interleaved x,z in world block coordinates, even-odd. */
@@ -37,8 +61,15 @@ public final class BuildingPlan {
 	 * the front door, towards the nearest street; long walls get one more each.
 	 */
 	public final List<int[]> doors;
+	public final Use use;
+	/** For a hall, what it is; else null. */
+	public final Trade hall;
+	/** Shops in ground-floor units (flats and offices only). */
+	public final List<Shop> shops;
+	private volatile Interior interior;
 
-	BuildingPlan(long id, List<double[]> rings, int floorY, int floors, int storey, int roofRise, Style style, int palette, List<int[]> doors) {
+	BuildingPlan(long id, List<double[]> rings, int floorY, int floors, int storey, int roofRise, Style style, int palette, List<int[]> doors,
+		Use use, Trade hall, List<Shop> shops) {
 		this.id = id;
 		this.rings = rings;
 		double x0 = Double.MAX_VALUE;
@@ -64,6 +95,24 @@ public final class BuildingPlan {
 		this.style = style;
 		this.palette = palette;
 		this.doors = doors;
+		this.use = use;
+		this.hall = hall;
+		this.shops = shops;
+	}
+
+	/** The building's rooms, stairs and doors, worked out the first time they are asked for. */
+	public Interior interior() {
+		Interior i = interior;
+		if (i == null) {
+			synchronized (this) {
+				i = interior;
+				if (i == null) {
+					i = Interior.of(this);
+					interior = i;
+				}
+			}
+		}
+		return i;
 	}
 
 	/** Which way the door at a column opens, or -1 when there is no door there. */
@@ -146,12 +195,17 @@ public final class BuildingPlan {
 
 	/** Builds plans for a map tile's building, or null when it can't stand (too small, in the water). */
 	static BuildingPlan of(long id, List<double[]> rings, double floorMeters, double latitude, double heightMeters, double area,
-		TerrainField field, Style style, List<int[]> doors, double storeyMeters, int maxFloors) {
+		TerrainField field, Style style, List<int[]> doors, double storeyMeters, int maxFloors, Use use, Trade hall, List<Shop> shops) {
 		double perMeter = field.projection().blocksPerMeter(latitude);
 		int storey = Math.max(5, (int) Math.ceil(storeyMeters * perMeter));
 		double realHeight = !Double.isNaN(heightMeters) && heightMeters > 0 ? heightMeters : area < 40 ? 3 : 6;
 		// Storeys counted from the real height at about 3 m each; each built at the taller game storey.
 		int floors = Math.max(1, Math.min(maxFloors, (int) Math.round(realHeight / 3.0)));
+		// A church's nave and a warehouse are one tall room, as high as the building (within reason).
+		if (use == Use.WAREHOUSE || hall == Trade.CHURCH) {
+			storey = Math.max(storey, Math.min(16, (int) Math.round(realHeight * perMeter)));
+			floors = 1;
+		}
 		int floorY = (int) Math.round(field.toY(floorMeters, latitude)) - 1;
 		while (floors > 1 && floorY + floors * storey + 8 > VerticalScale.MAX_Y) {
 			floors--;
@@ -163,7 +217,7 @@ public final class BuildingPlan {
 		boolean pitched = style != Style.DESERT && floors <= 6 && halfDepth <= 15 && halfDepth >= 2;
 		int rise = pitched ? (int) Math.max(2, Math.min(8, Math.floor(halfDepth))) : 0;
 		int palette = (int) ((id >>> 7) & 0xFF);
-		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, doors);
+		return new BuildingPlan(id, rings, floorY, floors, storey, rise, style, palette, doors, use, hall, shops);
 	}
 
 	/** The farthest any point inside the footprint is from its edge, in blocks: half the depth of its widest wing. */

@@ -31,7 +31,7 @@ import se.itssimple.realearth.geo.Mercator;
  */
 public final class OsmWater {
 	public static final int ZOOM = 14;
-	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building");
+	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building", "poi", "landuse");
 
 	/** A water area: rings of interleaved x,y in global z15 sample coordinates. Even-odd filled. */
 	public record Area(List<double[]> rings, boolean sea) {
@@ -57,14 +57,26 @@ public final class OsmWater {
 	}
 
 	/**
-	 * The water and ways in one zoom-14 tile. {@code known} is false when the map has no tile or could
-	 * not be fetched.
+	 * A point of interest -- a shop, café, church, school -- in global z15 sample coordinates, with its
+	 * OpenMapTiles class and subclass, name (or null), and floor (0 for the ground floor or unknown).
 	 */
-	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings) {
+	public record Poi(double x, double y, String cls, String subclass, String name, int level) {
+	}
+
+	/** What land is used for (residential, commercial, industrial, school...): rings like an Area's, and its box. */
+	public record Land(List<double[]> rings, String cls, double minX, double minY, double maxX, double maxY) {
+	}
+
+	/**
+	 * The water, ways, buildings, points of interest and land use in one zoom-14 tile. {@code known} is
+	 * false when the map has no tile or could not be fetched.
+	 */
+	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings, List<Poi> pois,
+		List<Land> landuse) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
-		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of());
+		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
-		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of());
+		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -185,6 +197,8 @@ public final class OsmWater {
 		List<Line> lines = new ArrayList<>();
 		List<Way> ways = new ArrayList<>();
 		List<Building> buildings = new ArrayList<>();
+		List<Poi> pois = new ArrayList<>();
+		List<Land> landuse = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
 			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
 				continue;
@@ -222,6 +236,29 @@ public final class OsmWater {
 				if (current != null) {
 					addBuilding(buildings, current, f.number("render_height"));
 				}
+				continue;
+			}
+			if (f.layer().equals("poi") && f.type() == VectorTile.POINT) {
+				double level = f.number("level");
+				for (double[] p : parts) {
+					pois.add(new Poi(p[0], p[1], cls, f.string("subclass"), f.string("name"), Double.isNaN(level) ? 0 : (int) level));
+				}
+				continue;
+			}
+			if (f.layer().equals("landuse") && f.type() == VectorTile.POLYGON && cls != null) {
+				double minX = Double.MAX_VALUE;
+				double minY = Double.MAX_VALUE;
+				double maxX = -Double.MAX_VALUE;
+				double maxY = -Double.MAX_VALUE;
+				for (double[] ring : parts) {
+					for (int i = 0; i < ring.length; i += 2) {
+						minX = Math.min(minX, ring[i]);
+						maxX = Math.max(maxX, ring[i]);
+						minY = Math.min(minY, ring[i + 1]);
+						maxY = Math.max(maxY, ring[i + 1]);
+					}
+				}
+				landuse.add(new Land(parts, cls, minX, minY, maxX, maxY));
 				continue;
 			}
 			if (f.layer().equals("water") && f.type() == VectorTile.POLYGON) {
@@ -266,7 +303,7 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true, ways, buildings);
+		return new Shapes(areas, lines, true, ways, buildings, pois, landuse);
 	}
 
 	private static void addBuilding(List<Building> buildings, List<double[]> rings, double height) {

@@ -462,6 +462,129 @@ final class SelfTest {
 	}
 
 	/**
+	 * Walks a building as a player would: from outside each street door, onto any block a step up or
+	 * down (stairs are blocks too), through doors, up and down ladders, with two blocks of headroom.
+	 * Returns {rooms reached, rooms} counting each room once per floor it is on.
+	 */
+	private static int[] walkRooms(ServerLevel level, se.itssimple.realearth.terrain.BuildingPlan plan) {
+		var inside = plan.interior();
+		int x0 = (int) Math.floor(plan.minX) - 3;
+		int z0 = (int) Math.floor(plan.minZ) - 3;
+		int x1 = (int) Math.ceil(plan.maxX) + 3;
+		int z1 = (int) Math.ceil(plan.maxZ) + 3;
+		int y0 = plan.floorY;
+		int y1 = plan.roofBaseY();
+		java.util.Set<Long> visited = new java.util.HashSet<>();
+		java.util.ArrayDeque<BlockPos> queue = new java.util.ArrayDeque<>();
+		for (var d : inside.doors) {
+			if (d.entrance()) {
+				// One block out from the door, the way it faces (0 north, 1 east, 2 south, 3 west).
+				int[] dx = {0, 1, 0, -1};
+				int[] dz = {-1, 0, 1, 0};
+				BlockPos out = new BlockPos(d.x() + dx[d.facing()], y0 + 1, d.z() + dz[d.facing()]);
+				if (visited.add(out.asLong())) {
+					queue.add(out);
+				}
+			}
+		}
+		java.util.Set<Long> rooms = new java.util.HashSet<>();
+		while (!queue.isEmpty()) {
+			BlockPos p = queue.poll();
+			int floor = (p.getY() - 1 - y0) / plan.storey;
+			if ((p.getY() - 1 - y0) % plan.storey == 0 && floor >= 0 && floor < plan.floors) {
+				var room = inside.roomAt(p.getX(), p.getZ(), floor);
+				if (room != null && room.kind != se.itssimple.realearth.terrain.Interior.Kind.LANDING) {
+					rooms.add((long) room.id << 8 | floor);
+				}
+			}
+			boolean onLadder = level.getBlockState(p).is(Blocks.LADDER);
+			for (Direction d : Direction.values()) {
+				for (int dy = -1; dy <= 1; dy++) {
+					if (d.getAxis() == Direction.Axis.Y && dy != 0) {
+						continue;
+					}
+					BlockPos n = p.relative(d).above(dy);
+					if (d.getAxis() == Direction.Axis.Y && !(onLadder || level.getBlockState(n).is(Blocks.LADDER))) {
+						continue;
+					}
+					if (n.getX() < x0 || n.getX() > x1 || n.getZ() < z0 || n.getZ() > z1 || n.getY() <= y0 || n.getY() > y1 + 1 || visited.contains(n.asLong())) {
+						continue;
+					}
+					boolean ladder = level.getBlockState(n).is(Blocks.LADDER);
+					if (!passable(level, n) || !passable(level, n.above()) || !ladder && !standable(level, n.below())) {
+						continue;
+					}
+					// Stepping up needs headroom over where you start.
+					if (dy == 1 && !passable(level, p.above(2))) {
+						continue;
+					}
+					visited.add(n.asLong());
+					queue.add(n);
+				}
+			}
+		}
+		int total = 0;
+		for (var room : inside.rooms) {
+			if (room.kind == se.itssimple.realearth.terrain.Interior.Kind.LANDING) {
+				continue;
+			}
+			for (int f = 0; f < plan.floors; f++) {
+				boolean on = false;
+				// A room is on a floor when one of its cells is that room on that floor.
+				for (int x = (int) Math.floor(plan.minX); x <= (int) Math.ceil(plan.maxX) && !on; x++) {
+					for (int z = (int) Math.floor(plan.minZ); z <= (int) Math.ceil(plan.maxZ) && !on; z++) {
+						var r = inside.roomAt(x, z, f);
+						on = r != null && r.id == room.id;
+					}
+				}
+				if (on) {
+					total++;
+					if (!rooms.contains((long) room.id << 8 | f) && total - rooms.size() <= 3) {
+						log("    not reached: %s %d on floor %d; the floor:%n%s", room.kind, room.id, f, inside.sketch(f));
+					}
+				}
+			}
+		}
+		if (rooms.size() < total && !inside.stairs.isEmpty()) {
+			// What the first stairwell is made of, a layer at a time from the ground floor up: r across,
+			// s down; '.' air, '#' block, '^' '>' 'v' '<' stairs climbing that way, 'D' door, 'w' wall.
+			var st = inside.stairs.get(0);
+			log("    stairwell at %d,%d (r %d,%d; s %d,%d; flights %d and %d):", st.ox(), st.oz(), st.rdx(), st.rdz(), st.sdx(), st.sdz(), st.a(), st.b());
+			for (int y = y0; y <= y0 + 2 * plan.storey + 1; y++) {
+				StringBuilder row = new StringBuilder();
+				for (int s = -1; s <= 3; s++) {
+					for (int r = -1; r <= st.a() + 2; r++) {
+						BlockPos at = new BlockPos(st.ox() + r * st.rdx() + s * st.sdx(), y, st.oz() + r * st.rdz() + s * st.sdz());
+						BlockState b = level.getBlockState(at);
+						char ch = b.isAir() ? '.' : b.getBlock() instanceof net.minecraft.world.level.block.StairBlock
+							? "^>v<".charAt(b.getValue(net.minecraft.world.level.block.StairBlock.FACING).get2DDataValue() == 2 ? 0
+								: b.getValue(net.minecraft.world.level.block.StairBlock.FACING).get2DDataValue() == 3 ? 1
+								: b.getValue(net.minecraft.world.level.block.StairBlock.FACING).get2DDataValue() == 0 ? 2 : 3)
+							: b.getBlock() instanceof net.minecraft.world.level.block.DoorBlock ? 'D' : '#';
+						row.append(ch);
+					}
+					row.append(' ');
+				}
+				log("      Y %d: %s", y, row);
+			}
+		}
+		return new int[] {Math.min(rooms.size(), total), total};
+	}
+
+	private static boolean passable(ServerLevel level, BlockPos p) {
+		BlockState s = level.getBlockState(p);
+		Block b = s.getBlock();
+		return s.getCollisionShape(level, p).isEmpty() || b instanceof net.minecraft.world.level.block.DoorBlock
+			|| b instanceof net.minecraft.world.level.block.CarpetBlock || b == Blocks.LADDER;
+	}
+
+	private static boolean standable(ServerLevel level, BlockPos p) {
+		BlockState s = level.getBlockState(p);
+		return !s.getCollisionShape(level, p).isEmpty() && !(s.getBlock() instanceof net.minecraft.world.level.block.DoorBlock) || s.is(Blocks.LADDER)
+			|| s.getBlock() instanceof net.minecraft.world.level.block.CarpetBlock;
+	}
+
+	/**
 	 * Walks a way's centreline (sample coordinates), carried on {@code extend} blocks past each end, and
 	 * counts the columns where the surface -- the deck where there is one, else the road -- is more than a
 	 * block above or below the column before. Columns off any road aren't walked. Returns {columns, steps, x, worst step, z} with x, z the
@@ -1047,6 +1170,146 @@ final class SelfTest {
 			var storeroom = server.reloadableRegistries().getLootTable(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.LOOT_TABLE,
 				net.minecraft.resources.Identifier.fromNamespaceAndPath("realearth", "chests/storeroom")));
 			check(storeroom != net.minecraft.world.level.storage.loot.LootTable.EMPTY, "the storeroom loot table loads");
+
+			// What the buildings of the city centre are used for, from the map's shops and land use.
+			{
+				java.util.Map<String, Integer> uses = new java.util.TreeMap<>();
+				java.util.Map<String, Integer> trades = new java.util.TreeMap<>();
+				java.util.Map<String, Integer> kinds = new java.util.TreeMap<>();
+				java.util.Set<Long> seen = new java.util.HashSet<>();
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						if (c == null) {
+							continue;
+						}
+						for (var plan : c.plans) {
+							if (!seen.add(plan.id)) {
+								continue;
+							}
+							uses.merge(plan.use + (plan.hall != null ? "/" + plan.hall : ""), 1, Integer::sum);
+							if (plan.floors > 1 && plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.WAREHOUSE) {
+								uses.merge(plan.interior().stairs.isEmpty() ? "storeys by ladder" : "storeys by stairs", 1, Integer::sum);
+							}
+							plan.shops.forEach(s -> trades.merge(s.trade().name(), 1, Integer::sum));
+							plan.interior().rooms.forEach(r -> kinds.merge(r.kind.name(), 1, Integer::sum));
+						}
+					}
+				}
+				log("building uses in 13 x 13 chunks of Stockholm: %s; shops %s; rooms %s", uses, trades, kinds);
+				check(uses.getOrDefault("FLATS", 0) + uses.getOrDefault("OFFICES", 0) > 10 && !trades.isEmpty() && kinds.getOrDefault("BED", 0) > 20,
+					"buildings are flats, offices and shops, divided into rooms");
+			}
+
+			// Nothing floats: every block in the buildings touches another, and what needs a floor has one.
+			{
+				int floating = 0;
+				int unsupported = 0;
+				int skyDoors = 0;
+				for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
+					for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
+						LevelChunk chunk = earth.getChunk(cx, cz);
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						if (c == null) {
+							continue;
+						}
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.building[k] == 0) {
+									continue;
+								}
+								var plan = c.plans.get(c.building[k] - 1);
+								for (int y = plan.floorY + 1; y <= plan.roofBaseY() + plan.roofRise + 1; y++) {
+									BlockPos at = new BlockPos(cx * 16 + x, y, cz * 16 + z);
+									BlockState s = earth.getBlockState(at);
+									if (s.isAir()) {
+										continue;
+									}
+									// Stray: nothing at all in the 3 x 3 x 3 round it. (A stepped roof's blocks touch at
+									// their edges only, as every stair roof does, and look whole.)
+									boolean alone = true;
+									for (int dx = -1; dx <= 1 && alone; dx++) {
+										for (int dy = -1; dy <= 1 && alone; dy++) {
+											for (int dz = -1; dz <= 1 && alone; dz++) {
+												alone = dx == 0 && dy == 0 && dz == 0 || earth.getBlockState(at.offset(dx, dy, dz)).isAir();
+											}
+										}
+									}
+									if (alone) {
+										if (floating++ < 5) {
+											StringBuilder around = new StringBuilder();
+											for (int d = 0; d < 4; d++) {
+												int nx = x + (d == 1 ? 1 : d == 3 ? -1 : 0);
+												int nz = z + (d == 2 ? 1 : d == 0 ? -1 : 0);
+												int nk = ChunkTerrain.index(nx, nz);
+												around.append(" ").append(c.building[nk]).append("/").append(c.building[nk] == 0 ? "-" : String.valueOf(c.roofY[nk]));
+											}
+											log("  floating %s at %d,%d,%d: building %d (roof Y %d, %s, %d floors from Y %d); neighbours' buildings/roof Y:%s",
+												s.getBlock().getDescriptionId(), at.getX(), at.getY(), at.getZ(), c.building[k], c.roofY[k], plan.use, plan.floors, plan.floorY, around);
+										}
+									}
+									Block b = s.getBlock();
+									// A door in an outer wall above the ground floor opens onto a fall.
+									if (b instanceof net.minecraft.world.level.block.DoorBlock && y > plan.floorY + 3) {
+										boolean outer = false;
+										for (Direction d : Direction.Plane.HORIZONTAL) {
+											int nk = ChunkTerrain.index(x + d.getStepX(), z + d.getStepZ());
+											outer |= c.building[nk] != c.building[k];
+										}
+										if (outer && skyDoors++ < 3) {
+											log("  door to nowhere at %d,%d,%d", at.getX(), at.getY(), at.getZ());
+										}
+									}
+									boolean needsFloor = b instanceof net.minecraft.world.level.block.CarpetBlock || b instanceof net.minecraft.world.level.block.PressurePlateBlock
+										|| b instanceof net.minecraft.world.level.block.FlowerPotBlock || b instanceof net.minecraft.world.level.block.BedBlock;
+									if (needsFloor && earth.getBlockState(at.below()).isAir()) {
+										if (unsupported++ < 5) {
+											log("  unsupported %s at %d,%d,%d", b.getDescriptionId(), at.getX(), at.getY(), at.getZ());
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				log("in 3 x 3 chunks of buildings: %d floating blocks, %d with nothing under them, %d door blocks in outer walls above the ground floor",
+					floating, unsupported, skyDoors);
+				check(floating == 0 && unsupported == 0, "nothing in the buildings floats (%d floating, %d unsupported)", floating, unsupported);
+				check(skyDoors == 0, "street doors are on the ground floor only (%d higher up)", skyDoors);
+			}
+
+			// Every room of a block of flats can be walked to: in at a street door, through the doors,
+			// up the stairs, on every floor.
+			{
+				int buildings = 0;
+				int reached = 0;
+				int total = 0;
+				java.util.Set<Long> seen = new java.util.HashSet<>();
+				for (int cx = bestCx - 6; cx <= bestCx + 6 && buildings < 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6 && buildings < 6; cz++) {
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						if (c == null) {
+							continue;
+						}
+						for (var plan : c.plans) {
+							if (buildings >= 6 || !seen.add(plan.id) || plan.floors < 3 || plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.FLATS
+								&& plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.OFFICES
+								|| plan.maxX - plan.minX > 48 || plan.maxZ - plan.minZ > 48) {
+								continue;
+							}
+							int[] walk = walkRooms(earth, plan);
+							buildings++;
+							reached += walk[0];
+							total += walk[1];
+							log("  %d-storey flats at %d,%d: %d of %d rooms reached (%d stairwells, %d doors)", plan.floors, (int) plan.minX, (int) plan.minZ,
+								walk[0], walk[1], plan.interior().stairs.size(), plan.interior().doors.size());
+						}
+					}
+				}
+				log("rooms reached in %d blocks of flats and offices: %d of %d", buildings, reached, total);
+				check(buildings >= 2 && reached == total, "every room of the flats and offices can be walked to (%d of %d)", reached, total);
+			}
 			var villagers = earth.getEntities(net.minecraft.world.entity.EntityType.VILLAGER,
 				new net.minecraft.world.phys.AABB((bestCx - 2) * 16, VerticalScale.MIN_Y, (bestCz - 2) * 16, (bestCx + 3) * 16, VerticalScale.MAX_Y, (bestCz + 3) * 16),
 				e -> true);

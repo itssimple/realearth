@@ -69,6 +69,9 @@ final class ShotTour {
 		new Shot("fagersjo-sky", 59.2480, 18.0640, 150, 0, 45),
 		new Shot("city-street", 59.3150, 18.0720, 25, 90, 25),
 		new Shot("inside", 59.3150, 18.0720, 0, 90, 10),
+		new Shot("inside-stairs", 59.3293, 18.0686, 0, 0, -20),
+		new Shot("inside-shop", 59.3293, 18.0686, 0, 0, 15),
+		new Shot("inside-flat", 59.3293, 18.0686, 0, 0, 15),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
@@ -180,6 +183,71 @@ final class ShotTour {
 		return null;
 	}
 
+	/**
+	 * A place to stand inside a building near (x, z): on a stairwell's landing facing the flights
+	 * ("stairs"), in a shop ("shop"), or in a living room on the first floor up ("flat"); with the
+	 * yaw to look across it in look[0].
+	 */
+	private static BlockPos findInterior(TerrainField field, int x, int z, String what, float[] look) {
+		java.util.Set<Long> seen = new java.util.HashSet<>();
+		for (int r = 0; r <= 6; r++) {
+			for (int dx = -r; dx <= r; dx++) {
+				for (int dz = -r; dz <= r; dz++) {
+					var t = field.chunkIfReady((x >> 4) + dx, (z >> 4) + dz);
+					if (t == null) {
+						continue;
+					}
+					for (var plan : t.plans) {
+						if (!seen.add(plan.id)) {
+							continue;
+						}
+						var inside = plan.interior();
+						if (what.equals("stairs") && !inside.stairs.isEmpty()) {
+							var st = inside.stairs.get(0);
+							// On the landing's far corner, looking back along the shaft.
+							int lx = st.ox() + st.rdx() * 0 + st.sdx() * 2;
+							int lz = st.oz() + st.rdz() * 0 + st.sdz() * 2;
+							look[0] = yaw(st.rdx() - st.sdx(), st.rdz() - st.sdz());
+							return new BlockPos(lx, plan.floorY + 1, lz);
+						}
+						for (var room : inside.rooms) {
+							boolean wanted = what.equals("shop") ? room.kind == se.itssimple.realearth.terrain.Interior.Kind.SHOP
+								: room.kind == se.itssimple.realearth.terrain.Interior.Kind.LIVING && plan.floors > 1;
+							if (!wanted || room.size() < 12) {
+								continue;
+							}
+							var cells = inside.cellsOf(room);
+							double cx = 0;
+							double cz = 0;
+							for (int[] c : cells) {
+								cx += c[0];
+								cz += c[1];
+							}
+							cx /= cells.size();
+							cz /= cells.size();
+							// From the cell farthest from the middle, looking at the middle.
+							int[] far = cells.get(0);
+							for (int[] c : cells) {
+								if (Math.hypot(c[0] - cx, c[1] - cz) > Math.hypot(far[0] - cx, far[1] - cz)) {
+									far = c;
+								}
+							}
+							look[0] = yaw(cx - far[0], cz - far[1]);
+							int floor = what.equals("shop") ? 0 : 1;
+							return new BlockPos(far[0], plan.floorY + floor * plan.storey + 1, far[1]);
+						}
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	/** Minecraft's yaw for looking along (dx, dz): 0 south, 90 west. */
+	private static float yaw(double dx, double dz) {
+		return (float) Math.toDegrees(Math.atan2(-dx, dz));
+	}
+
 	/** The most open air pocket below the ground near (x, z): a cave to look around in. */
 	private static BlockPos findOpenSpace(ServerLevel level, int x, int z, int minDepth, int maxDepth) {
 		BlockPos best = new BlockPos(x, RealEarth.surfaceY(level, Heightmap.Types.OCEAN_FLOOR, x, z) - minDepth, z);
@@ -234,7 +302,16 @@ final class ShotTour {
 			server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "time set noon");
 			player.setGameMode(GameType.SPECTATOR);
 			BlockPos camera = new BlockPos(x, (int) Math.min(ground + shot.above, earth.getMaxY() - 4), z);
-			if (shot.name.startsWith("inside")) {
+			float yaw = shot.yaw;
+			if (shot.name.startsWith("inside-")) {
+				// In a stairwell, a shop or a flat's living room nearby, looking across it.
+				float[] look = new float[1];
+				BlockPos room = findInterior(field, x, z, shot.name.substring("inside-".length()), look);
+				if (room != null) {
+					camera = room;
+					yaw = look[0];
+				}
+			} else if (shot.name.startsWith("inside")) {
 				// Inside the nearest building with storeys above, on its first floor, at eye height.
 				BlockPos room = findRoom(field, x, z);
 				if (room != null) {
@@ -244,7 +321,7 @@ final class ShotTour {
 				player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, 20 * 600, 0, false, false));
 				camera = findOpenSpace(earth, x, z, shot.minDepth, shot.maxDepth);
 			}
-			player.teleportTo(earth, camera.getX() + 0.5, camera.getY(), camera.getZ() + 0.5, Set.of(), shot.yaw, shot.pitch, true);
+			player.teleportTo(earth, camera.getX() + 0.5, camera.getY(), camera.getZ() + 0.5, Set.of(), yaw, shot.pitch, true);
 			RealEarth.LOGGER.info("[shots] {} at X {} Z {}, ground Y {} ({} m)", shot.name, x, z, ground,
 				Math.round(field.toElevation(ground, field.projection().latitudeAt(z))));
 			moving = false;

@@ -45,7 +45,8 @@ final class Buildings {
 	private Buildings() {
 	}
 
-	record Candidate(OsmWater.Building building, int tileX, int tileY, List<double[]> blockRings, List<OsmWater.Way> ways) {
+	record Candidate(OsmWater.Building building, int tileX, int tileY, List<double[]> blockRings, List<OsmWater.Way> ways, List<OsmWater.Poi> pois,
+		List<OsmWater.Land> landuse) {
 		/** True when this building was planned before, so neither its outline nor its ground need working out again. */
 		boolean planned() {
 			return PLANS.containsKey(BuildingPlan.idOf(tileX, tileY, building));
@@ -67,7 +68,7 @@ final class Buildings {
 				BuildingPlan known = PLANS.get(BuildingPlan.idOf(tiles.get(t)[0], tiles.get(t)[1], b));
 				if (known != null) {
 					if (known.maxX >= baseX - 1 && known.minX <= baseX + 17 && known.maxZ >= baseZ - 1 && known.minZ <= baseZ + 17) {
-						out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], known.rings, s.ways()));
+						out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], known.rings, s.ways(), s.pois(), s.landuse()));
 					}
 					continue;
 				}
@@ -92,7 +93,7 @@ final class Buildings {
 				if (x1 < baseX - 1 || x0 > baseX + 17 || z1 < baseZ - 1 || z0 > baseZ + 17) {
 					continue;
 				}
-				out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], rings, s.ways()));
+				out.add(new Candidate(b, tiles.get(t)[0], tiles.get(t)[1], rings, s.ways(), s.pois(), s.landuse()));
 			}
 		}
 		return out;
@@ -175,8 +176,9 @@ final class Buildings {
 			double lon = Projection.wrapLongitude((centre[0] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0);
 			int climate = koppen == null ? 0 : koppen.classAt(lat, lon);
 			long id = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
+			Use use = classify(field, c, centre, area);
 			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), area, field, style(climate),
-				doors(c, lat), storeyMeters, maxFloors);
+				doors(c, lat), storeyMeters, maxFloors, use.use(), use.hall(), use.shops());
 			if (!t.degraded) {
 				PLANS.put(id, plan);
 			}
@@ -243,6 +245,136 @@ final class Buildings {
 		}
 		t.plans = plans;
 		se.itssimple.realearth.Perf.stop("terrain.buildings.mark", marking);
+	}
+
+	/** Below this many square blocks a home is a house, not a block of flats. */
+	private static final double HOUSE_AREA = 160;
+	/** At least this many square blocks for a trade to fill a whole building; smaller, it is a shop unit. */
+	private static final double HALL_AREA = 250;
+
+	record Use(BuildingPlan.Use use, BuildingPlan.Trade hall, List<BuildingPlan.Shop> shops) {
+	}
+
+	/**
+	 * What a building is used for, from the shops, cafes, churches and schools the map has inside its
+	 * footprint, and from the land use around it: a trade that fills a big building makes it a hall;
+	 * other shops get ground-floor units with flats above; industrial land gets warehouses, commercial
+	 * land offices; homes are flats, or houses where they are small.
+	 */
+	static Use classify(TerrainField field, Candidate c, double[] centre, double area) {
+		OsmWater.Building b = c.building();
+		List<BuildingPlan.Shop> shops = new ArrayList<>();
+		BuildingPlan.Trade hall = null;
+		double[] ring = c.blockRings().get(0);
+		double nearX = (ring[0] + ring[ring.length - 2]) / 2;
+		for (OsmWater.Poi poi : c.pois()) {
+			if (poi.x() < b.minX() || poi.x() > b.maxX() || poi.y() < b.minY() || poi.y() > b.maxY()
+				|| !BuildingPlan.contains(b.rings(), poi.x() + 0.5, poi.y() + 0.5)) {
+				continue;
+			}
+			BuildingPlan.Trade trade = trade(poi.cls(), poi.subclass());
+			if (trade == null) {
+				continue;
+			}
+			boolean fills = trade == BuildingPlan.Trade.CHURCH || trade.ordinal() >= BuildingPlan.Trade.LIBRARY.ordinal() && area >= HALL_AREA;
+			if (fills) {
+				hall = hall == null ? trade : hall;
+				continue;
+			}
+			// Small for a hall: a library is a bookshop-sized reading room, a market a grocer's.
+			BuildingPlan.Trade unit = switch (trade) {
+				case LIBRARY -> BuildingPlan.Trade.BOOKS;
+				case MARKET -> BuildingPlan.Trade.GROCERY;
+				case SCHOOL -> BuildingPlan.Trade.OFFICE;
+				default -> trade;
+			};
+			double[] at = toBlock(field.projection(), poi.x(), poi.y(), nearX);
+			shops.add(new BuildingPlan.Shop((int) Math.floor(at[0]), (int) Math.floor(at[1]), unit, poi.name()));
+		}
+		if (hall != null) {
+			return new Use(BuildingPlan.Use.HALL, hall, List.of());
+		}
+		String land = landAt(c, centre);
+		if (shops.isEmpty() && land != null) {
+			switch (land) {
+				case "industrial", "railway", "garages", "quarry", "military" -> {
+					return new Use(area >= HOUSE_AREA ? BuildingPlan.Use.WAREHOUSE : BuildingPlan.Use.HOUSE, null, List.of());
+				}
+				case "commercial", "retail", "hospital" -> {
+					return new Use(area >= HOUSE_AREA ? BuildingPlan.Use.OFFICES : BuildingPlan.Use.HOUSE, null, List.of());
+				}
+				case "school", "university", "college", "kindergarten" -> {
+					if (area >= HALL_AREA) {
+						return new Use(BuildingPlan.Use.HALL, BuildingPlan.Trade.SCHOOL, List.of());
+					}
+				}
+				default -> {
+				}
+			}
+		}
+		boolean offices = "commercial".equals(land) || "retail".equals(land);
+		BuildingPlan.Use use = area < HOUSE_AREA && shops.isEmpty() ? BuildingPlan.Use.HOUSE : offices ? BuildingPlan.Use.OFFICES : BuildingPlan.Use.FLATS;
+		return new Use(use, null, List.copyOf(shops));
+	}
+
+	/** The land use at a point, or null; the most specific where areas overlap (a school within a residential area). */
+	private static String landAt(Candidate c, double[] p) {
+		String found = null;
+		for (OsmWater.Land l : c.landuse()) {
+			if (p[0] < l.minX() || p[0] > l.maxX() || p[1] < l.minY() || p[1] > l.maxY() || !BuildingPlan.contains(l.rings(), p[0] + 0.5, p[1] + 0.5)) {
+				continue;
+			}
+			switch (l.cls()) {
+				case "neighbourhood", "suburb", "quarter" -> {
+					// Places, not uses.
+				}
+				case "residential" -> found = found == null ? "residential" : found;
+				default -> found = l.cls();
+			}
+		}
+		return found;
+	}
+
+	/**
+	 * The trade of an OpenMapTiles point of interest that has premises of its own, or null for what
+	 * stands in the street (bicycle parking, bins, bus stops, artworks) or isn't a trade.
+	 */
+	static BuildingPlan.Trade trade(String cls, String subclass) {
+		if (cls == null) {
+			return null;
+		}
+		String sub = subclass == null ? "" : subclass;
+		return switch (cls) {
+			case "bakery" -> BuildingPlan.Trade.BAKERY;
+			case "grocery" -> "supermarket".equals(sub) ? BuildingPlan.Trade.MARKET : BuildingPlan.Trade.GROCERY;
+			case "butcher" -> BuildingPlan.Trade.BUTCHER;
+			case "clothing_store", "shoes" -> BuildingPlan.Trade.CLOTHES;
+			case "library" -> "library".equals(sub) ? BuildingPlan.Trade.LIBRARY : BuildingPlan.Trade.BOOKS;
+			case "books" -> BuildingPlan.Trade.BOOKS;
+			case "hardware" -> BuildingPlan.Trade.HARDWARE;
+			case "cafe", "restaurant", "fast_food", "bar", "pub", "ice_cream", "beer", "biergarten" -> BuildingPlan.Trade.FOOD;
+			case "pharmacy", "doctors", "dentist" -> BuildingPlan.Trade.PHARMACY;
+			case "florist", "garden_centre" -> BuildingPlan.Trade.FLOWERS;
+			case "place_of_worship" -> BuildingPlan.Trade.CHURCH;
+			case "school", "college", "university", "kindergarten" -> BuildingPlan.Trade.SCHOOL;
+			case "office", "bank", "lodging", "hairdresser", "town_hall", "police", "laundry", "veterinary" -> BuildingPlan.Trade.OFFICE;
+			case "post" -> "post_office".equals(sub) ? BuildingPlan.Trade.OFFICE : null;
+			case "art_gallery" -> "gallery".equals(sub) ? BuildingPlan.Trade.GENERAL : null;
+			case "alcohol_shop", "music", "mobile_phone", "jewelry", "gift", "toys", "bicycle", "car", "furniture" -> BuildingPlan.Trade.GENERAL;
+			case "shop" -> switch (sub) {
+				case "supermarket", "department_store", "mall" -> BuildingPlan.Trade.MARKET;
+				case "convenience", "greengrocer", "deli", "kiosk", "farm" -> BuildingPlan.Trade.GROCERY;
+				case "shoes", "fabric", "tailor", "boutique", "bag", "fashion", "clothes" -> BuildingPlan.Trade.CLOTHES;
+				case "doityourself", "hardware", "tools", "trade", "paint" -> BuildingPlan.Trade.HARDWARE;
+				case "chemist", "medical_supply" -> BuildingPlan.Trade.PHARMACY;
+				case "florist", "garden_centre" -> BuildingPlan.Trade.FLOWERS;
+				case "butcher", "seafood" -> BuildingPlan.Trade.BUTCHER;
+				case "bakery", "pastry", "confectionery" -> BuildingPlan.Trade.BAKERY;
+				case "books" -> BuildingPlan.Trade.BOOKS;
+				default -> BuildingPlan.Trade.GENERAL;
+			};
+			default -> null;
+		};
 	}
 
 	/** The village style for a climate: the same choice as the biome of built-up land. */
