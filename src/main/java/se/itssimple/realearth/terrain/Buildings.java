@@ -7,6 +7,7 @@ import java.util.Map;
 import se.itssimple.realearth.climate.Koppen;
 import se.itssimple.realearth.geo.Mercator;
 import se.itssimple.realearth.geo.Projection;
+import se.itssimple.realearth.osm.OsmDetail;
 import se.itssimple.realearth.osm.OsmWater;
 import se.itssimple.realearth.osm.Ways;
 
@@ -99,6 +100,63 @@ final class Buildings {
 		return out;
 	}
 
+	/** How much a building's outline and its shape in OpenStreetMap's detail must overlap to be one (of their union). */
+	private static final double SAME = 0.6;
+
+	/** The detail of the candidate's tile, or none. */
+	private static List<OsmDetail.Shape> shapes(Map<Long, OsmDetail.Tile> details, Candidate c) {
+		OsmDetail.Tile tile = details.get(((long) c.tileX() << 32) | c.tileY());
+		return tile == null ? List.of() : tile.shapes();
+	}
+
+	/** What OpenStreetMap says of the candidate beyond its outline, or NONE. */
+	static BuildingPlan.Detail detail(Map<Long, OsmDetail.Tile> details, Candidate c) {
+		OsmWater.Building outline = c.building();
+		OsmDetail.Shape s = match(shapes(details, c), outline.rings(), outline.minX(), outline.minY(), outline.maxX(), outline.maxY());
+		return s == null ? BuildingPlan.Detail.NONE : detail(s);
+	}
+
+	private static BuildingPlan.Detail detail(OsmDetail.Shape s) {
+		return new BuildingPlan.Detail(s.roof(), s.roofMeters(), s.roofColour(), s.colour());
+	}
+
+	/**
+	 * The shape in the detail that is this outline (sample coordinates): of those whose boxes meet it,
+	 * the one overlapping it most, measured on a grid over both, if that is most of the two together.
+	 */
+	static OsmDetail.Shape match(List<OsmDetail.Shape> shapes, List<double[]> rings, double minX, double minY, double maxX, double maxY) {
+		OsmDetail.Shape best = null;
+		double bestShare = SAME;
+		for (OsmDetail.Shape s : shapes) {
+			if (s.maxX() < minX || s.minX() > maxX || s.maxY() < minY || s.minY() > maxY) {
+				continue;
+			}
+			double x0 = Math.min(minX, s.minX());
+			double y0 = Math.min(minY, s.minY());
+			double x1 = Math.max(maxX, s.maxX());
+			double y1 = Math.max(maxY, s.maxY());
+			int both = 0;
+			int either = 0;
+			int grid = 16;
+			for (int j = 0; j < grid; j++) {
+				for (int i = 0; i < grid; i++) {
+					double x = x0 + (i + 0.5) * (x1 - x0) / grid;
+					double y = y0 + (j + 0.5) * (y1 - y0) / grid;
+					boolean a = BuildingPlan.contains(rings, x, y);
+					boolean b = BuildingPlan.contains(s.rings(), x, y);
+					both += a && b ? 1 : 0;
+					either += a || b ? 1 : 0;
+				}
+			}
+			double share = either == 0 ? 0 : (double) both / either;
+			if (share > bestShare) {
+				bestShare = share;
+				best = s;
+			}
+		}
+		return best;
+	}
+
 	/** Share of a raised part's footprint that must be over the building for it to stand on it. */
 	private static final double ON_TOP = 0.8;
 
@@ -106,7 +164,8 @@ final class Buildings {
 	 * The raised parts of the candidate's tile that stand on it: mostly over its footprint, and starting
 	 * at least half way up it (lower down, a storey over a passage or an arcade: those are left out).
 	 */
-	static List<BuildingPlan.Raised> raised(TerrainField field, Candidate c) {
+	static List<BuildingPlan.Raised> raised(TerrainField field, Candidate c, Map<Long, OsmDetail.Tile> details) {
+		List<OsmDetail.Shape> shapes = shapes(details, c);
 		OsmWater.Building b = c.building();
 		double height = Double.isNaN(b.heightMeters()) ? 6 : b.heightMeters();
 		List<BuildingPlan.Raised> out = new ArrayList<>();
@@ -147,7 +206,8 @@ final class Buildings {
 				}
 			}
 			if (inside > 0 && over >= inside * ON_TOP) {
-				out.add(new BuildingPlan.Raised(rings, part.minMeters(), part.heightMeters()));
+				OsmDetail.Shape s = match(shapes, part.rings(), part.minX(), part.minY(), part.maxX(), part.maxY());
+				out.add(new BuildingPlan.Raised(rings, part.minMeters(), part.heightMeters(), s == null ? BuildingPlan.Detail.NONE : detail(s)));
 			}
 		}
 		return out;
@@ -190,8 +250,8 @@ final class Buildings {
 	 * own map tile that contains it (tiles overlap a little at their edges, and so do their copies of a
 	 * building).
 	 */
-	static void plan(TerrainField field, ChunkTerrain t, List<Candidate> candidates, Map<Long, ProcessedTile> tiles, double[] sx, double[] sy,
-		boolean[] onGlobe, int chunkX, int chunkZ, double storeyMeters, int maxFloors) {
+	static void plan(TerrainField field, ChunkTerrain t, List<Candidate> candidates, Map<Long, ProcessedTile> tiles, Map<Long, OsmDetail.Tile> details,
+		double[] sx, double[] sy, boolean[] onGlobe, int chunkX, int chunkZ, double storeyMeters, int maxFloors) {
 		List<BuildingPlan> plans = new ArrayList<>();
 		List<Candidate> planned = new ArrayList<>();
 		Koppen koppen = Koppen.get();
@@ -231,7 +291,8 @@ final class Buildings {
 			int climate = koppen == null ? 0 : koppen.classAt(lat, lon);
 			long id = BuildingPlan.idOf(c.tileX(), c.tileY(), c.building());
 			Use use = classify(field, c, centre, area);
-			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), c.building().colour(), raised(field, c), area, field, style(climate),
+			BuildingPlan plan = BuildingPlan.of(id, c.blockRings(), floor, lat, c.building().heightMeters(), c.building().colour(), detail(details, c),
+				raised(field, c, details), area, field, style(climate),
 				doors(c, lat), storeyMeters, maxFloors, use.use(), use.hall(), use.shops(), c.tileX(), c.tileY());
 			if (!t.degraded) {
 				PLANS.put(id, plan);

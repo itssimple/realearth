@@ -152,6 +152,14 @@ public class RealEarth implements ModInitializer {
 			se.itssimple.realearth.world.Places.tick(server);
 			se.itssimple.realearth.world.Townsfolk.tick(server);
 			se.itssimple.realearth.world.Milestones.tick(server);
+			// Building detail for the map round each player, before chunks there need it.
+			TerrainField field = terrain;
+			ServerLevel earth = server.getTickCount() % 100 == 0 && field != null ? earthLevel(server) : null;
+			if (earth != null) {
+				for (var player : earth.players()) {
+					field.prefetchDetail(player.getX(), player.getZ());
+				}
+			}
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			if (isEarth(handler.player.level())) {
@@ -195,6 +203,9 @@ public class RealEarth implements ModInitializer {
 			return t;
 		});
 		OsmWater map = config.useMapWater ? new OsmWater(config.mapTileJson, cacheRoot.resolve("openfreemap"), auxDownloads) : null;
+		if (map != null && config.useBuildings && config.useBuildingDetail) {
+			map.enableDetail(config.buildingDetailUrl, config.buildingDetailRelease, config.buildingDetailCatalog, cacheRoot.resolve("overture"));
+		}
 		WorldCover cover = config.useLandCover ? new WorldCover(config.landCoverUrl, cacheRoot.resolve("worldcover"), auxDownloads) : null;
 		Projection projection = world.toProjection();
 		terrain = new TerrainField(store, config, projection,

@@ -85,6 +85,18 @@ public final class EarthConfig {
 	 * between them. Where buildings are mapped, no villages are generated.
 	 */
 	public boolean useBuildings = true;
+	/**
+	 * Roof shapes, roof and facade colours, and the parts landmarks are mapped in (towers, spires,
+	 * domes): OpenStreetMap's 3D building tags, from the Overture Maps buildings tiles. Read a map tile
+	 * at a time and kept on disk.
+	 */
+	public boolean useBuildingDetail = true;
+	/** The Overture buildings archive (PMTiles), with {release} for the release. */
+	public String buildingDetailUrl = "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/{release}/buildings.pmtiles";
+	/** Which Overture release: "latest" for the newest in the catalogue, or one like "2026-10-21.0". */
+	public String buildingDetailRelease = "latest";
+	/** Overture's release catalogue, for "latest". */
+	public String buildingDetailCatalog = "https://stac.overturemaps.org/catalog.json";
 	/** Show the town's name as a title on walking into it, and the district's above the hotbar, from the map's place names. */
 	public boolean placeTitles = true;
 	/** Height of each storey, in metres (at least 5 blocks). Storeys are counted from the real height at 3 m each. */

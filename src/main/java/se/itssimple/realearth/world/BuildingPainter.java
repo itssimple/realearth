@@ -128,7 +128,7 @@ final class BuildingPainter {
 	 * brick, yellow render, Falu red, white plaster; glass facades with grey bands between storeys.
 	 */
 	private static Palette palette(BuildingPlan p) {
-		Palette styled = styled(p);
+		Palette styled = roofed(styled(p), p.roofColour);
 		if (Facades.glass(p.colour)) {
 			return new Palette(state(Blocks.LIGHT_BLUE_STAINED_GLASS), state(Blocks.LIGHT_GRAY_CONCRETE), styled.floor(), styled.foundation(),
 				styled.stairs(), styled.roofFull(), styled.flatRoof(), state(Blocks.LIGHT_GRAY_CONCRETE), state(Blocks.LIGHT_BLUE_STAINED_GLASS_PANE),
@@ -140,6 +140,16 @@ final class BuildingPainter {
 		}
 		return new Palette(state(wall), state(Facades.trim(wall, p.colour)), styled.floor(), styled.foundation(), styled.stairs(), styled.roofFull(),
 			styled.flatRoof(), styled.trim(), styled.window(), styled.door());
+	}
+
+	/** A palette with the roof in a colour from the map, where there is one. */
+	private static Palette roofed(Palette pal, int roofColour) {
+		Block[] roof = Facades.roof(roofColour);
+		if (roof == null) {
+			return pal;
+		}
+		return new Palette(pal.wall(), pal.corner(), pal.floor(), pal.foundation(), roof[0], state(roof[1]), pal.flatRoof(), pal.trim(), pal.window(),
+			pal.door());
 	}
 
 	private static Palette styled(BuildingPlan p) {
@@ -358,11 +368,12 @@ final class BuildingPainter {
 					}
 				} else {
 					set(chunk, pos, x, roofBase, z, wall ? pal.wall : pal.floor);
-					int level = (int) Math.min(p.roofRise, Math.floor(p.edgeDistance(wx, wz)));
+					int level = (int) Math.min(p.roofRise, Math.floor(p.roofHeight(wx, wz)));
+					// Under the roof, the attic; in the outer wall, the wall goes on up: a gable end.
 					for (int y = roofBase + 1; y < roofBase + level; y++) {
-						set(chunk, pos, x, y, z, AIR);
+						set(chunk, pos, x, y, z, wall ? pal.wall : AIR);
 					}
-					int dir = uphill(p, wx, wz);
+					int dir = p.curvedRoof() ? -1 : uphill(p, wx, wz);
 					BlockState roof = level >= p.roofRise || dir < 0 ? pal.roofFull : with(state(pal.stairs), BlockStateProperties.HORIZONTAL_FACING, DIRS[dir]);
 					set(chunk, pos, x, roofBase + Math.max(level, 1), z, roof);
 					// Where the next column's roof is two or more blocks lower (a wall at a slant), close
@@ -370,7 +381,7 @@ final class BuildingPainter {
 					int lowest = level;
 					for (int d = 0; d < 4; d++) {
 						if (p.contains(wx + DX[d], wz + DZ[d])) {
-							lowest = Math.min(lowest, (int) Math.min(p.roofRise, Math.floor(p.edgeDistance(wx + DX[d], wz + DZ[d]))));
+							lowest = Math.min(lowest, (int) Math.min(p.roofRise, Math.floor(p.roofHeight(wx + DX[d], wz + DZ[d]))));
 						}
 					}
 					for (int y = roofBase + Math.max(1, lowest + 1); y < roofBase + Math.max(level, 1); y++) {
@@ -452,6 +463,7 @@ final class BuildingPainter {
 	 */
 	private static int tower(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int z, int wx, int wz, BuildingPlan p, Palette pal,
 		BuildingPlan.Tower tower, int roofBase) {
+		pal = roofed(pal, tower.roofColour());
 		boolean eastWest = !tower.contains(wx - 1, wz) || !tower.contains(wx + 1, wz);
 		boolean edge = false;
 		int sides = 0;
@@ -477,8 +489,8 @@ final class BuildingPainter {
 			}
 			return capBase + 1;
 		}
-		// A pyramid: the further in from the tower's walls, the higher, to its point at the top.
-		int level = (int) Math.max(1, Math.min(tower.capRise(), Math.ceil(tower.edgeDistance(wx, wz) / Math.max(0.5, tower.halfDepth()) * tower.capRise())));
+		// A point, a dome or an onion: the further in from the tower's walls, the higher, to the top.
+		int level = (int) Math.max(1, Math.min(tower.capRise(), Math.ceil(tower.capHeight(wx, wz))));
 		for (int y = capBase + 1; y <= capBase + level; y++) {
 			set(chunk, pos, x, y, z, pal.roofFull);
 		}
@@ -614,11 +626,11 @@ final class BuildingPainter {
 
 	/** Direction in which the roof rises at a column (towards the ridge), or -1 on the ridge. */
 	private static int uphill(BuildingPlan p, int wx, int wz) {
-		double here = p.edgeDistance(wx, wz);
+		double here = p.roofHeight(wx, wz);
 		int best = -1;
 		double bestRise = 0.25;
 		for (int d = 0; d < 4; d++) {
-			double rise = p.edgeDistance(wx + DX[d], wz + DZ[d]) - here;
+			double rise = p.roofHeight(wx + DX[d], wz + DZ[d]) - here;
 			if (rise > bestRise) {
 				bestRise = rise;
 				best = d;

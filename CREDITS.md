@@ -17,6 +17,14 @@ Served as vector tiles by **OpenFreeMap** (<https://openfreemap.org>), in the **
 Real Earth turns the map data into terrain while generating a world; worlds made with it contain a derived
 work of OpenStreetMap data.
 
+## Building detail: Overture Maps
+
+Roof shapes, roof heights, roof and facade colours, and the parts buildings are mapped in (towers, spires,
+domes), from the buildings theme of the **Overture Maps Foundation** (<https://overturemaps.org>), read from its
+PMTiles release. The buildings theme is available under the Open Database License (ODbL) 1.0; its data is
+mostly from OpenStreetMap, **© OpenStreetMap contributors**, with other sources as listed at
+<https://docs.overturemaps.org/attribution/>.
+
 ## Elevation: Terrain Tiles
 
 Ground and sea-floor heights, from the **Terrain Tiles** dataset on the Registry of Open Data on AWS

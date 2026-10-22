@@ -56,6 +56,11 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   - Storeys are at least 4.5 m (5 blocks) high; their number comes from the building's real height at about
     3 m each, up to 10.
   - Windows, corner posts; small buildings get hipped roofs, large ones flat roofs with a parapet.
+  - **As mapped, where the map says more:** walls in the building's colour or material (yellow render, Falu red,
+    white plaster, brick, glass facades); roofs in their mapped shape (gabled with gable ends, hipped, pyramidal,
+    domes, onions, barrels), height and colour (red tile, slate, copper green, gold); and the parts landmarks are
+    mapped in, such as towers and spires, rising from the roofs with their own caps. Roof shapes, colours and parts are
+    OpenStreetMap's 3D tags, read from the Overture Maps buildings tiles one map tile at a time and kept on disk.
   - **What each building is**, from the map's points of interest and land use (OpenFreeMap's `poi` and `landuse`
     layers):
     - **Flats**: cut into stairwell sections, each with a street door into its landing and a turning stair that
@@ -322,6 +327,8 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `useLandCover`, `landCoverUrl` | true, ESA S3 | Land cover from ESA WorldCover |
 | `useRoads`, `useRailways` | true, true | Roads, tracks and paths; railways and trams (need `useMapWater`'s map tiles) |
 | `useBuildings` | true | Build the map's buildings (and no villages where they are) |
+| `useBuildingDetail` | true | Roof shapes, colours and building parts from the Overture Maps buildings tiles |
+| `buildingDetailUrl`, `buildingDetailRelease`, `buildingDetailCatalog` | Overture's S3, `latest`, Overture's STAC | Where those tiles are, and which monthly release |
 | `placeTitles` | true | Show a town's name on walking into it, and the district's above the hotbar |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
 | `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
@@ -411,6 +418,8 @@ players see it when they join or arrive on Earth.
   national data from Australia, Austria, Canada, Mexico, New Zealand, Norway and the UK, and ArcticDEM.
 - Water, roads, railways and bridges: © OpenStreetMap contributors (ODbL), served as vector tiles by OpenFreeMap
   in the OpenMapTiles schema (© OpenMapTiles).
+- Roof shapes, roof and facade colours, and building parts: Overture Maps Foundation, buildings theme (from
+  OpenStreetMap and others), ODbL 1.0, © OpenStreetMap contributors.
 - Land cover: ESA WorldCover 10 m 2021 v200, © ESA WorldCover project / contains modified Copernicus Sentinel
   data (2021), CC BY 4.0.
 - Climate: Beck, H. E., et al. (2023). High-resolution (1 km) Köppen-Geiger maps for 1901–2099 based on

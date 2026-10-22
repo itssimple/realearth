@@ -33,7 +33,10 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
    4. **Interiors that follow the building.** Layouts are on the block grid, so a building at an angle has
       stepped inner walls. Stairwells reach the street through a hallway there, so only the smallest
       houses have ladders; laying out along the building's own axis would straighten the walls too.
-   Also landmarks, and buildings in Distant Horizons' far terrain.
+   5. **Buildings that look like themselves.** Done: map colours, raised parts as towers, roof shapes, heights
+      and colours from OpenStreetMap's 3D tags (via Overture's tiles). Next: overhangs and arcades (parts that
+      start low), roof direction for skillions, and a datapack hook for hand-made landmark builds.
+   Also buildings in Distant Horizons' far terrain.
 7. **Villages that follow the streets**, where buildings aren't mapped: city villages are vanilla jigsaw villages
    on a grid; placing their houses along the real road network would fit better.
 8. **Real places as advancements.** Done: towns, capitals, the equator, polar circles, prime meridian, date

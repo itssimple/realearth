@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import se.itssimple.realearth.EarthConfig;
 import se.itssimple.realearth.climate.Koppen;
 import se.itssimple.realearth.landcover.WorldCover;
+import se.itssimple.realearth.osm.OsmDetail;
 import se.itssimple.realearth.osm.OsmWater;
 import se.itssimple.realearth.data.TileStore;
 import se.itssimple.realearth.geo.Mercator;
@@ -461,6 +462,17 @@ public final class TerrainField implements AutoCloseable {
 				}
 			}
 			List<Bridges.Run> chunkRuns = runs;
+			// The roofs and parts of the buildings still to plan, from their map tiles' detail. Overpass
+			// can be slow: not waited for past DETAIL_WAIT_S (a copy times out, not the shared request);
+			// a chunk built without it is listed for repair.
+			Map<Long, CompletableFuture<OsmDetail.Tile>> detailTiles = new HashMap<>();
+			OsmDetail detail = map == null ? null : map.detail();
+			for (Buildings.Candidate c : candidates) {
+				if (detail != null && !c.planned()) {
+					detailTiles.computeIfAbsent(((long) c.tileX() << 32) | c.tileY(),
+						k -> detail.tile(c.tileX(), c.tileY()).copy().completeOnTimeout(OsmDetail.Tile.FAILED, DETAIL_WAIT_S, TimeUnit.SECONDS));
+				}
+			}
 			for (Buildings.Candidate c : candidates) {
 				if (c.planned()) {
 					continue;
@@ -469,11 +481,16 @@ public final class TerrainField implements AutoCloseable {
 					addTiles(withBuildings, (long) Math.floor(p[0]) - 2, (long) Math.floor(p[0]) + 3, (long) Math.floor(p[1]) - 2, (long) Math.floor(p[1]) + 3);
 				}
 			}
-			return CompletableFuture.allOf(withBuildings.values().toArray(CompletableFuture[]::new)).thenApplyAsync(w -> {
+			List<CompletableFuture<?>> waits = new ArrayList<>(withBuildings.values());
+			waits.addAll(detailTiles.values());
+			return CompletableFuture.allOf(waits.toArray(CompletableFuture[]::new)).thenApplyAsync(w -> {
 				Map<Long, ProcessedTile> all2 = new HashMap<>();
 				withBuildings.forEach((key, f) -> all2.put(key, f.join()));
+				Map<Long, OsmDetail.Tile> details = new HashMap<>();
+				detailTiles.forEach((key, f) -> details.put(key, f.join()));
 				long started = se.itssimple.realearth.Perf.start();
-				ChunkTerrain built = build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, chunkRuns, sx, sy, onGlobe, chunkX, chunkZ);
+				ChunkTerrain built = build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, details, chunkRuns, sx, sy, onGlobe, chunkX,
+					chunkZ);
 				se.itssimple.realearth.Perf.stop("terrain", started);
 				return built;
 			}, workers);
@@ -482,11 +499,12 @@ public final class TerrainField implements AutoCloseable {
 
 	/** The chunk's terrain from everything fetched for it. */
 	private ChunkTerrain build(ChunkTerrain terrain, Map<Long, ProcessedTile> tiles, java.util.Set<Long> own, WorldCover.Lookup landCover,
-		List<OsmWater.Shapes> shapes, List<Buildings.Candidate> candidates, List<Bridges.Run> runs, double[] sx, double[] sy, boolean[] onGlobe,
+		List<OsmWater.Shapes> shapes, List<Buildings.Candidate> candidates, Map<Long, OsmDetail.Tile> details, List<Bridges.Run> runs, double[] sx, double[] sy, boolean[] onGlobe,
 		int chunkX, int chunkZ) {
 		int n = ChunkTerrain.SPAN;
 		{
-			terrain.degraded = landCover.degraded() || tiles.values().stream().anyMatch(t -> t.degraded);
+			terrain.degraded = landCover.degraded() || tiles.values().stream().anyMatch(t -> t.degraded)
+				|| details.values().stream().anyMatch(OsmDetail.Tile::failed);
 			Koppen climate = Koppen.get();
 			for (int k = 0; k < n * n; k++) {
 				terrain.cover[k] = (byte) landCover.classAt(terrain.latitude[k], terrain.longitude[k]);
@@ -552,7 +570,7 @@ public final class TerrainField implements AutoCloseable {
 			}
 			if (!candidates.isEmpty()) {
 				long started = se.itssimple.realearth.Perf.start();
-				Buildings.plan(this, terrain, candidates, tiles, sx, sy, onGlobe, chunkX, chunkZ, config.storeyMeters, config.maxFloors);
+				Buildings.plan(this, terrain, candidates, tiles, details, sx, sy, onGlobe, chunkX, chunkZ, config.storeyMeters, config.maxFloors);
 				se.itssimple.realearth.Perf.stop("terrain.buildings", started);
 			}
 			return terrain;
@@ -574,6 +592,8 @@ public final class TerrainField implements AutoCloseable {
 		}
 	}
 
+	/** Longest a chunk waits for its buildings' detail from Overpass, in seconds, before it is built without. */
+	private static final int DETAIL_WAIT_S = 120;
 	/** How far, in samples, past a chunk a bridge can be and still matter to it: its ramps reach this far. */
 	private static final int BRIDGE_REACH_SAMPLES = 40;
 
@@ -776,9 +796,36 @@ public final class TerrainField implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Asks for the building detail of the map tiles round a block position ahead of need, so chunks
+	 * there rarely wait for Overpass: for each player now and then.
+	 */
+	public void prefetchDetail(double blockX, double blockZ) {
+		OsmDetail detail = map == null ? null : map.detail();
+		if (detail == null || !config.useBuildings) {
+			return;
+		}
+		double lat = projection.latitudeAt(blockZ);
+		double lon = projection.longitudeAt(blockX, lat);
+		if (Double.isNaN(lat) || Double.isNaN(lon) || Math.abs(lat) > 85) {
+			return;
+		}
+		double perTile = (double) Mercator.TILE_SIZE * (1 << (Mercator.ZOOM - OsmWater.ZOOM));
+		int tx = (int) Math.floor((Mercator.sampleX(Projection.wrapLongitude(lon)) + 0.5) / perTile);
+		int ty = (int) Math.floor((Mercator.sampleY(lat) + 0.5) / perTile);
+		for (int dy = -1; dy <= 1; dy++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				detail.tile(tx + dx, ty + dy);
+			}
+		}
+	}
+
 	@Override
 	public void close() {
 		workers.shutdownNow();
 		store.close();
+		if (map != null) {
+			map.close();
+		}
 	}
 }

@@ -1458,6 +1458,35 @@ final class SelfTest {
 				check(towers >= 1 && standing == towers, "towers stand on the roofs of their buildings (%d of %d)", standing, towers);
 			}
 
+			// Roofs as mapped: OpenStreetMap's 3D tags from the Overture buildings tiles.
+			{
+				var detail = field.map() == null ? null : field.map().detail();
+				int shapes = -1;
+				try {
+					shapes = detail == null ? -1 : detail.tile(9014, 4818).get(120, java.util.concurrent.TimeUnit.SECONDS).shapes().size();
+				} catch (Exception e) {
+					log("building detail: %s", e);
+				}
+				java.util.Map<String, Integer> roofs = new java.util.TreeMap<>();
+				java.util.Map<String, Integer> caps = new java.util.TreeMap<>();
+				java.util.Set<Long> seenPlans = new java.util.HashSet<>();
+				// Over all of the city planned so far (the centre's blocks are mostly offices, roofs unmapped).
+				for (int cx = bestCx - 40; cx <= bestCx + 40; cx++) {
+					for (int cz = bestCz - 40; cz <= bestCz + 40; cz++) {
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						for (var plan : c == null ? List.<se.itssimple.realearth.terrain.BuildingPlan>of() : c.plans) {
+							if (seenPlans.add(plan.id)) {
+								roofs.merge(plan.roof.name(), 1, Integer::sum);
+								plan.towers.forEach(t -> caps.merge(t.roof().name(), 1, Integer::sum));
+							}
+						}
+					}
+				}
+				log("building detail: %d shapes in central Stockholm's tile; of %d buildings planned round it, roofs %s; tower caps %s", shapes, seenPlans.size(), roofs, caps);
+				int mapped = roofs.entrySet().stream().filter(e -> !e.getKey().equals("NONE")).mapToInt(java.util.Map.Entry::getValue).sum();
+				check(shapes > 100 && mapped >= 10, "buildings take their roofs as mapped (%d shapes in the tile, %d buildings)", shapes, mapped);
+			}
+
 			// No lava lakes in the parks: in town, lava at the ground was made a pond.
 			{
 				int lava = 0;

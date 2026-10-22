@@ -22,6 +22,9 @@ public final class Credits {
 	private static final List<Source> SOURCES = List.of(
 		new Source("Water, roads, railways, bridges",
 			"© OpenStreetMap contributors, ODbL 1.0. Tiles by OpenFreeMap, © OpenMapTiles.", "https://www.openstreetmap.org/copyright"),
+		new Source("Roof shapes, colours and building parts",
+			"Overture Maps Foundation, buildings theme (from OpenStreetMap and others), ODbL 1.0. © OpenStreetMap contributors.",
+			"https://docs.overturemaps.org/attribution/"),
 		new Source("Elevation",
 			"Terrain Tiles on AWS (Mapzen): USGS 3DEP, SRTM and GMTED2010; NOAA ETOPO1; Copernicus EU-DEM; Geoscience Australia; "
 				+ "Kartverket; Environment Agency (UK); LINZ; INEGI; Natural Resources Canada; DGM Österreich; ArcticDEM.",

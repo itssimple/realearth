@@ -23,6 +23,16 @@ public final class Facades {
 		{Blocks.LIME_TERRACOTTA, 0x677534}, {Blocks.PRISMARINE_BRICKS, 0x63ab9e}, {Blocks.TUFF_BRICKS, 0x62665f}, {Blocks.PACKED_MUD, 0x8e6a4f}, {Blocks.POLISHED_GRANITE, 0x9a6a59},
 		{Blocks.PURPLE_TERRACOTTA, 0x764656}, {Blocks.GRAY_TERRACOTTA, 0x392a23}, {Blocks.BLACK_TERRACOTTA, 0x251610}};
 
+	/** Roofs: stairs, the full block, and the texture's average colour. */
+	private static final Object[][] ROOFS = {
+		{Blocks.BRICK_STAIRS, Blocks.BRICKS, 0x966153}, {Blocks.DEEPSLATE_TILE_STAIRS, Blocks.DEEPSLATE_TILES, 0x363637},
+		{Blocks.OXIDIZED_CUT_COPPER_STAIRS, Blocks.OXIDIZED_CUT_COPPER, 0x4f997e}, {Blocks.DARK_OAK_STAIRS, Blocks.DARK_OAK_PLANKS, 0x422b14},
+		{Blocks.SPRUCE_STAIRS, Blocks.SPRUCE_PLANKS, 0x725430}, {Blocks.POLISHED_BLACKSTONE_BRICK_STAIRS, Blocks.POLISHED_BLACKSTONE_BRICKS, 0x302a31},
+		{Blocks.POLISHED_ANDESITE_STAIRS, Blocks.POLISHED_ANDESITE, 0x848685}, {Blocks.STONE_BRICK_STAIRS, Blocks.STONE_BRICKS, 0x7a797a},
+		{Blocks.SMOOTH_QUARTZ_STAIRS, Blocks.SMOOTH_QUARTZ, 0xece6df}, {Blocks.SMOOTH_SANDSTONE_STAIRS, Blocks.SMOOTH_SANDSTONE, 0xdfd6aa},
+		{Blocks.PRISMARINE_BRICK_STAIRS, Blocks.PRISMARINE_BRICKS, 0x63ab9e}, {Blocks.WAXED_CUT_COPPER_STAIRS, Blocks.WAXED_CUT_COPPER, 0xbf6a50},
+		{Blocks.MUD_BRICK_STAIRS, Blocks.MUD_BRICKS, 0x89674f}, {Blocks.RED_NETHER_BRICK_STAIRS, Blocks.RED_NETHER_BRICKS, 0x450709}};
+
 	/** How much lightness counts against hue and saturation in matching. */
 	private static final double LIGHTNESS_WEIGHT = 0.5;
 	/** How much of a map colour's saturation is matched against: textures are greyer. */
@@ -52,6 +62,42 @@ public final class Facades {
 			case 0xa52a2a -> Blocks.TERRACOTTA;
 			default -> nearest(colour);
 		};
+	}
+
+	/**
+	 * A roof of a colour as {stairs, full block}, or null to keep the climate's. A gold roof (a dome) is
+	 * gold blocks, with no stairs of its own.
+	 */
+	public static Block[] roof(int colour) {
+		if (colour == Colours.NONE) {
+			return null;
+		}
+		if (colour == Colours.GLASS) {
+			return new Block[] {Blocks.PRISMARINE_BRICK_STAIRS, Blocks.LIGHT_BLUE_STAINED_GLASS};
+		}
+		double[] want = lab(colour);
+		if (want[0] > 70 && want[2] > 45 && want[1] < 20) {
+			return new Block[] {Blocks.SMOOTH_SANDSTONE_STAIRS, Blocks.GOLD_BLOCK};
+		}
+		want[1] *= MUTE;
+		want[2] *= MUTE;
+		Object[] best = ROOFS[0];
+		double bestDistance = Double.MAX_VALUE;
+		for (Object[] candidate : ROOFS) {
+			double d = distance(want, lab((Integer) candidate[2]));
+			if (d < bestDistance) {
+				bestDistance = d;
+				best = candidate;
+			}
+		}
+		return new Block[] {(Block) best[0], (Block) best[1]};
+	}
+
+	private static double distance(double[] want, double[] have) {
+		double dl = (want[0] - have[0]) * LIGHTNESS_WEIGHT;
+		double da = want[1] - have[1];
+		double db = want[2] - have[2];
+		return dl * dl + da * da + db * db;
 	}
 
 	/** Trim for corners and the bands between storeys: white on a coloured wall, stone on a white one. */

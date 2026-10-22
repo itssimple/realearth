@@ -116,10 +116,30 @@ public final class OsmWater {
 		}
 	};
 
+	private volatile OsmDetail detail;
+
 	public OsmWater(String tileJsonUrl, Path root, Executor downloads) {
 		this.tileJsonUrl = tileJsonUrl;
 		this.root = root;
 		this.downloads = downloads;
+	}
+
+	/** Reads the buildings' roofs and parts too (see OsmDetail), kept under {@code detailRoot}. */
+	public void enableDetail(String template, String release, String catalog, Path detailRoot) {
+		detail = new OsmDetail(template, release, catalog, detailRoot);
+	}
+
+	/** The buildings' roofs and parts, or null when not asked for. */
+	public OsmDetail detail() {
+		return detail;
+	}
+
+	/** Stops asking for detail; for a server shutting down. */
+	public void close() {
+		OsmDetail d = detail;
+		if (d != null) {
+			d.close();
+		}
 	}
 
 	public CompletableFuture<Shapes> tile(int x, int y) {

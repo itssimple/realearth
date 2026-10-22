@@ -74,6 +74,10 @@ final class ShotTour {
 		new Shot("inside-flat", 59.3293, 18.0686, 0, 0, 15),
 		new Shot("inside-front", 59.3293, 18.0686, 0, 0, 5),
 		new Shot("inside-tower", 59.3293, 18.0686, 0, 0, 10),
+		// Landmarks with mapped roofs and parts: the City Hall across the water from Riddarholmen, and
+		// Riddarholmskyrkan's spire from the west.
+		new Shot("stadshuset", 59.3250, 18.0625, 35, 135, 8),
+		new Shot("riddarholmskyrkan", 59.3247, 18.0610, 25, -90, 12),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
