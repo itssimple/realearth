@@ -176,6 +176,16 @@ final class BuildingPainter {
 		};
 	}
 
+	/** Signs in the floor's wood, birch in deserts. */
+	static Block wallSign(BuildingPlan p) {
+		return switch (p.style) {
+			case DESERT -> Blocks.BIRCH_WALL_SIGN;
+			case SAVANNA -> Blocks.ACACIA_WALL_SIGN;
+			case TAIGA, SNOWY -> Blocks.SPRUCE_WALL_SIGN;
+			case PLAINS -> Blocks.OAK_WALL_SIGN;
+		};
+	}
+
 	/** The steps of stairs inside, pews too: the floor's wood. */
 	private static Block steps(BuildingPlan p) {
 		return switch (p.style) {
@@ -382,7 +392,8 @@ final class BuildingPainter {
 			}
 		}
 
-		// A step up to each street door, or a cut down to it, from the street side.
+		// A step up to each street door, or a cut down to it, from the street side; over a shop's or
+		// hall's door, its name.
 		for (Interior.Door d : inside.doors) {
 			if (!d.entrance()) {
 				continue;
@@ -399,6 +410,12 @@ final class BuildingPainter {
 					set(chunk, pos, ox, y, oz, AIR);
 				}
 				top[oz * 16 + ox] = Math.max(top[oz * 16 + ox], floorY);
+				Interior.Room room = inside.roomAt(d.x() - DX[d.facing()], d.z() - DZ[d.facing()], 0);
+				int signY = floorY + 3;
+				if (room != null && room.name != null && (room.kind == Interior.Kind.SHOP || room.kind == Interior.Kind.HALLROOM)
+					&& chunk.getBlockState(pos.set(ox, signY, oz)).isAir()) {
+					Signs.write(set(chunk, pos, ox, signY, oz, with(state(wallSign(p)), BlockStateProperties.HORIZONTAL_FACING, DIRS[d.facing()])), room.name);
+				}
 			}
 		}
 	}

@@ -64,7 +64,7 @@ public final class BuildingPlan {
 	public final Use use;
 	/** For a hall, what it is; else null. */
 	public final Trade hall;
-	/** Shops in ground-floor units (flats and offices only). */
+	/** Shops in ground-floor units (flats and offices); for a hall, the hall itself, for its name. */
 	public final List<Shop> shops;
 	private volatile Interior interior;
 	/**

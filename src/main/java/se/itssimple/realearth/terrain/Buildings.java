@@ -265,6 +265,7 @@ final class Buildings {
 		OsmWater.Building b = c.building();
 		List<BuildingPlan.Shop> shops = new ArrayList<>();
 		BuildingPlan.Trade hall = null;
+		String hallName = null;
 		double[] ring = c.blockRings().get(0);
 		double nearX = (ring[0] + ring[ring.length - 2]) / 2;
 		for (OsmWater.Poi poi : c.pois()) {
@@ -278,7 +279,10 @@ final class Buildings {
 			}
 			boolean fills = trade == BuildingPlan.Trade.CHURCH || trade.ordinal() >= BuildingPlan.Trade.LIBRARY.ordinal() && area >= HALL_AREA;
 			if (fills) {
-				hall = hall == null ? trade : hall;
+				if (hall == null) {
+					hall = trade;
+					hallName = poi.name();
+				}
 				continue;
 			}
 			// Small for a hall: a library is a bookshop-sized reading room, a market a grocer's.
@@ -292,7 +296,8 @@ final class Buildings {
 			shops.add(new BuildingPlan.Shop((int) Math.floor(at[0]), (int) Math.floor(at[1]), unit, poi.name()));
 		}
 		if (hall != null) {
-			return new Use(BuildingPlan.Use.HALL, hall, List.of());
+			// The hall's own name rides along as its one "shop", for the sign over its door.
+			return new Use(BuildingPlan.Use.HALL, hall, hallName == null ? List.of() : List.of(new BuildingPlan.Shop(0, 0, hall, hallName)));
 		}
 		String land = landAt(c, centre);
 		if (shops.isEmpty() && land != null) {

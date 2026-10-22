@@ -54,6 +54,8 @@ public final class ChunkTerrain {
 	public final short[] building = new short[SPAN * SPAN];
 	/** Top of the building's roof on each column, for distant terrain; meaningless where there is none. */
 	public final int[] roofY = new int[SPAN * SPAN];
+	/** Named streets near this chunk, for the signs at its kerbs. */
+	public volatile java.util.List<se.itssimple.realearth.osm.OsmWater.Street> streets = java.util.List.of();
 	/** Beds built in this chunk, as world x, y, z of the foot: where villagers move in. */
 	public volatile java.util.List<int[]> beds = java.util.List.of();
 

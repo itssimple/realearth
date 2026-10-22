@@ -8,13 +8,16 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BellAttachType;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import se.itssimple.realearth.geo.Mercator;
 import se.itssimple.realearth.landcover.WorldCover;
+import se.itssimple.realearth.osm.OsmWater;
 import se.itssimple.realearth.osm.Ways;
 import se.itssimple.realearth.terrain.ChunkTerrain;
 
 /**
  * The village life between real buildings: a well, a farm plot, a bell on its post or a stack of hay
- * in some open patches of town, and street lamps along the streets.
+ * in some open patches of town, street lamps along the streets, and now and then a post at the kerb
+ * with the street's name on it.
  *
  * Each feature fits inside one chunk (it is placed in the chunk's middle), so no chunk ever depends on
  * its neighbours for one.
@@ -24,6 +27,10 @@ final class TownFeatures {
 	/** Chance that an open, flat patch of town gets a feature. */
 	private static final double FEATURE_CHANCE = 0.22;
 	private static final double LAMP_CHANCE = 0.035;
+	/** Chance that a chunk of town has a street name post at one of its kerbs. */
+	private static final double STREET_SIGN_CHANCE = 0.35;
+	/** A street's name is put up within this many metres of its centreline. */
+	private static final double STREET_SIGN_REACH = 9;
 
 	private TownFeatures() {
 	}
@@ -66,6 +73,78 @@ final class TownFeatures {
 				}
 			}
 		}
+		streetSign(chunk, t, pos, baseX, baseZ);
+	}
+
+	/**
+	 * A street name post at one kerb of the chunk, now and then: a fence with a sign on it, turned to
+	 * face the street it names (the nearest named street there is).
+	 */
+	private static void streetSign(ChunkAccess chunk, ChunkTerrain t, BlockPos.MutableBlockPos pos, int baseX, int baseZ) {
+		if (t.streets.isEmpty() || GeoNoise.hash(baseX >> 4, 95, baseZ >> 4) >= STREET_SIGN_CHANCE) {
+			return;
+		}
+		int best = -1;
+		double bestHash = Double.MAX_VALUE;
+		for (int z = 0; z < 16; z++) {
+			for (int x = 0; x < 16; x++) {
+				int k = ChunkTerrain.index(x, z);
+				if (t.way[k] != Ways.NONE || t.building[k] != 0 || t.waterTopY[k] != Integer.MIN_VALUE || t.deckY[k] != Integer.MIN_VALUE
+					|| GeoNoise.hash(baseX + x, 94, baseZ + z) < LAMP_CHANCE) {
+					continue;
+				}
+				boolean kerb = Ways.isPaved(t.way[ChunkTerrain.index(x - 1, z)]) || Ways.isPaved(t.way[ChunkTerrain.index(x + 1, z)])
+					|| Ways.isPaved(t.way[ChunkTerrain.index(x, z - 1)]) || Ways.isPaved(t.way[ChunkTerrain.index(x, z + 1)]);
+				double h = GeoNoise.hash(baseX + x, 96, baseZ + z);
+				if (kerb && h < bestHash) {
+					bestHash = h;
+					best = k;
+				}
+			}
+		}
+		if (best < 0) {
+			return;
+		}
+		int x = best % ChunkTerrain.SPAN - 1;
+		int z = best / ChunkTerrain.SPAN - 1;
+		double lat = t.latitude[best];
+		double sx = Mercator.sampleX(t.longitude[best]);
+		double sy = Mercator.sampleY(lat);
+		double spacing = Mercator.sampleSpacingMeters(lat);
+		String name = null;
+		double nearest = STREET_SIGN_REACH / spacing;
+		double towardX = 0;
+		double towardZ = 0;
+		for (OsmWater.Street st : t.streets) {
+			if (st.maxX() < sx - nearest || st.minX() > sx + nearest || st.maxY() < sy - nearest || st.minY() > sy + nearest) {
+				continue;
+			}
+			double[] p = st.points();
+			for (int i = 0; i + 3 < p.length; i += 2) {
+				double dx = p[i + 2] - p[i];
+				double dy = p[i + 3] - p[i + 1];
+				double len2 = dx * dx + dy * dy;
+				double u = len2 > 0 ? Math.max(0, Math.min(1, ((sx - p[i]) * dx + (sy - p[i + 1]) * dy) / len2)) : 0;
+				double qx = p[i] + u * dx;
+				double qy = p[i + 1] + u * dy;
+				double d = Math.hypot(qx - sx, qy - sy);
+				if (d < nearest) {
+					nearest = d;
+					name = st.name();
+					towardX = qx - sx;
+					towardZ = qy - sy;
+				}
+			}
+		}
+		if (name == null) {
+			return;
+		}
+		int y = t.topSolidY[best];
+		// Facing the street: a standing sign's rotation counts sixteenths of a turn from south.
+		double yaw = Math.toDegrees(Math.atan2(-towardX, towardZ));
+		int rotation = Math.floorMod((int) Math.round(yaw / 22.5), 16);
+		set(chunk, pos, x, y + 1, z, Blocks.SPRUCE_FENCE.defaultBlockState());
+		Signs.write(set(chunk, pos, x, y + 2, z, Blocks.SPRUCE_SIGN.defaultBlockState().setValue(BlockStateProperties.ROTATION_16, rotation)), name);
 	}
 
 	/** Town: built-up land or mapped buildings in this chunk. */
@@ -196,9 +275,10 @@ final class TownFeatures {
 		}
 	}
 
-	private static void set(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, BlockState s) {
+	/** Sets a block, and its block entity when it has one; returns that block entity, or null. */
+	private static net.minecraft.world.level.block.entity.BlockEntity set(ChunkAccess chunk, BlockPos.MutableBlockPos pos, int x, int y, int z, BlockState s) {
 		if (y <= chunk.getMinY() || y >= chunk.getMaxY()) {
-			return;
+			return null;
 		}
 		chunk.setBlockState(pos.set(x, y, z), s, 0);
 		// Blocks set straight into a chunk get no block entity of their own: a bed, chest or bell would
@@ -208,7 +288,9 @@ final class TownFeatures {
 			var entity = entityBlock.newBlockEntity(at, s);
 			if (entity != null) {
 				chunk.setBlockEntity(entity);
+				return entity;
 			}
 		}
+		return null;
 	}
 }

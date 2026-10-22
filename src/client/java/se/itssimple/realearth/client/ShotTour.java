@@ -72,6 +72,7 @@ final class ShotTour {
 		new Shot("inside-stairs", 59.3293, 18.0686, 0, 0, -20),
 		new Shot("inside-shop", 59.3293, 18.0686, 0, 0, 15),
 		new Shot("inside-flat", 59.3293, 18.0686, 0, 0, 15),
+		new Shot("inside-front", 59.3293, 18.0686, 0, 0, 5),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),
@@ -188,7 +189,7 @@ final class ShotTour {
 	 * ("stairs"), in a shop ("shop"), or in a living room on the first floor up ("flat"); with the
 	 * yaw to look across it in look[0].
 	 */
-	private static BlockPos findInterior(TerrainField field, int x, int z, String what, float[] look) {
+	private static BlockPos findInterior(ServerLevel level, TerrainField field, int x, int z, String what, float[] look) {
 		java.util.Set<Long> seen = new java.util.HashSet<>();
 		for (int r = 0; r <= 6; r++) {
 			for (int dx = -r; dx <= r; dx++) {
@@ -202,6 +203,33 @@ final class ShotTour {
 							continue;
 						}
 						var inside = plan.interior();
+						if (what.equals("front")) {
+							// Out in the street before a shop's door, looking at it and its sign.
+							int[] fx = {0, 1, 0, -1};
+							int[] fz = {-1, 0, 1, 0};
+							for (var d : inside.doors) {
+								var room = d.entrance() ? inside.roomAt(d.x() - fx[d.facing()], d.z() - fz[d.facing()], 0) : null;
+								if (room != null && room.name != null && room.kind == se.itssimple.realearth.terrain.Interior.Kind.SHOP) {
+									look[0] = yaw(-fx[d.facing()], -fz[d.facing()]);
+									// As far out as the street is open, up to six blocks.
+									int out = 1;
+									while (out < 6) {
+										BlockPos feet = new BlockPos(d.x() + fx[d.facing()] * (out + 1), plan.floorY + 1, d.z() + fz[d.facing()] * (out + 1));
+										if (!level.getBlockState(feet).getCollisionShape(level, feet).isEmpty()
+											|| !level.getBlockState(feet.above()).getCollisionShape(level, feet.above()).isEmpty()) {
+											break;
+										}
+										out++;
+									}
+									if (out < 3) {
+										continue;
+									}
+									RealEarth.LOGGER.info("[shots] front of {} at {},{} facing {}, from {} blocks out, yaw {}", room.name, d.x(), d.z(), d.facing(), out, look[0]);
+									return new BlockPos(d.x() + fx[d.facing()] * out, plan.floorY + 1, d.z() + fz[d.facing()] * out);
+								}
+							}
+							continue;
+						}
 						if (what.equals("stairs") && !inside.stairs.isEmpty()) {
 							var st = inside.stairs.get(0);
 							// On the landing's far corner, looking back along the shaft.
@@ -290,8 +318,10 @@ final class ShotTour {
 		ticks = 0;
 
 		List<CompletableFuture<?>> pending = new ArrayList<>();
-		for (int dz = -2; dz <= 2; dz++) {
-			for (int dx = -2; dx <= 2; dx++) {
+		// Inside shots look for a building of a kind round about: wider.
+		int around = shot.name.startsWith("inside-") ? 6 : 2;
+		for (int dz = -around; dz <= around; dz++) {
+			for (int dx = -around; dx <= around; dx++) {
 				pending.add(field.chunk((x >> 4) + dx, (z >> 4) + dz));
 			}
 		}
@@ -306,7 +336,7 @@ final class ShotTour {
 			if (shot.name.startsWith("inside-")) {
 				// In a stairwell, a shop or a flat's living room nearby, looking across it.
 				float[] look = new float[1];
-				BlockPos room = findInterior(field, x, z, shot.name.substring("inside-".length()), look);
+				BlockPos room = findInterior(earth, field, x, z, shot.name.substring("inside-".length()), look);
 				if (room != null) {
 					camera = room;
 					yaw = look[0];

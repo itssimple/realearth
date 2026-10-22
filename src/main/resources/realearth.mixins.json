@@ -16,7 +16,8 @@
     "EntityStorageAccessor",
     "InitialSpawnMixin",
     "RegistryLifecycleMixin",
-    "DimensionStabilityMixin"
+    "DimensionStabilityMixin",
+    "SignBlockEntityAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

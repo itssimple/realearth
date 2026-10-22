@@ -1286,6 +1286,42 @@ final class SelfTest {
 					"buildings are flats, offices and shops, divided into rooms");
 			}
 
+			// Names on signs: over shop and hall doors, and on posts at street corners.
+			{
+				int streetSigns = 0;
+				int doorSigns = 0;
+				List<String> seen = new ArrayList<>();
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
+							if (!(be instanceof net.minecraft.world.level.block.entity.SignBlockEntity sign)) {
+								continue;
+							}
+							StringBuilder text = new StringBuilder();
+							for (var line : sign.getFrontText().getMessages(false)) {
+								if (!line.getString().isEmpty()) {
+									text.append(text.length() > 0 ? " " : "").append(line.getString());
+								}
+							}
+							if (text.length() == 0) {
+								continue;
+							}
+							boolean wall = sign.getBlockState().getBlock() instanceof net.minecraft.world.level.block.WallSignBlock;
+							if (wall) {
+								doorSigns++;
+							} else {
+								streetSigns++;
+							}
+							if (seen.size() < 8) {
+								seen.add((wall ? "door: " : "street: ") + text);
+							}
+						}
+					}
+				}
+				log("signs in 13 x 13 chunks of Stockholm: %d street name posts, %d over doors; e.g. %s", streetSigns, doorSigns, seen);
+				check(streetSigns >= 10 && doorSigns >= 1, "streets and shops have their names on signs (%d streets, %d doors)", streetSigns, doorSigns);
+			}
+
 			// Nothing floats: every block in the buildings touches another, and what needs a floor has one.
 			{
 				int floating = 0;

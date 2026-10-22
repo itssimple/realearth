@@ -469,6 +469,7 @@ public final class Interior {
 			if (roomMax == Integer.MAX_VALUE) {
 				Room r = newRoom(Kind.HALLROOM, id);
 				r.trade = plan.hall;
+				r.name = plan.shops.isEmpty() ? null : plan.shops.get(0).name();
 				for (int c : part) {
 					claim(r, c, 3);
 				}

@@ -501,10 +501,29 @@ public final class TerrainField implements AutoCloseable {
 			}
 			if (!shapes.isEmpty()) {
 				List<OsmWater.Way> ways = new ArrayList<>();
+				double sx0 = Double.MAX_VALUE;
+				double sy0 = Double.MAX_VALUE;
+				double sx1 = -Double.MAX_VALUE;
+				double sy1 = -Double.MAX_VALUE;
+				for (int k = 0; k < n * n; k++) {
+					if (onGlobe[k]) {
+						sx0 = Math.min(sx0, sx[k]);
+						sx1 = Math.max(sx1, sx[k]);
+						sy0 = Math.min(sy0, sy[k]);
+						sy1 = Math.max(sy1, sy[k]);
+					}
+				}
+				List<OsmWater.Street> streets = new ArrayList<>();
 				for (OsmWater.Shapes s : shapes) {
 					terrain.degraded |= s.failed();
 					ways.addAll(s.ways());
+					for (OsmWater.Street st : s.streets()) {
+						if (st.maxX() >= sx0 - 4 && st.minX() <= sx1 + 4 && st.maxY() >= sy0 - 4 && st.minY() <= sy1 + 4) {
+							streets.add(st);
+						}
+					}
 				}
+				terrain.streets = List.copyOf(streets);
 				if (config.useRoads || config.useRailways) {
 					long started = se.itssimple.realearth.Perf.start();
 					long minX = Long.MAX_VALUE;

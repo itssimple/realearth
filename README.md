@@ -44,6 +44,8 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
 - **Place names.** Walking into a town shows its name as a title, with the district under it (Södermalm,
   Stockholm); walking on from one district into the next shows the new one above the hotbar. Names come from
   the map's places: a city's name reaches some kilometres, a village's one or two.
+- **Signs.** Shops and halls have their name from the map on a sign over the door, and now and then a post at
+  the kerb carries the name of the street beside it.
 
 - **Real buildings.** Every building mapped in OpenStreetMap stands on its real footprint, built like a village
   house in the style of its climate: oak, cobblestone and brick in most of Europe, spruce in the north, snowy
