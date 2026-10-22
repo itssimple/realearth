@@ -15,8 +15,9 @@ import se.itssimple.realearth.world.EarthChunkGenerator;
 
 /**
  * A new Real Earth world spawns at the configured start point, not where the climate noise would put
- * it near block 0, 0 -- which on the Mercator map is the open Atlantic off West Africa. Vanilla's
- * search for a dry spot then works around the start point as usual.
+ * it near block 0, 0 -- which on the Mercator map is the open Atlantic off West Africa -- and on land:
+ * a start point in the sea or a lake moves to the nearest dry ground. Vanilla's search for a spot to
+ * stand then works around it as usual.
  */
 @Mixin(MinecraftServer.class)
 public abstract class InitialSpawnMixin {
@@ -24,7 +25,9 @@ public abstract class InitialSpawnMixin {
 	private static BlockPos realearth$spawnAtStart(Climate.Sampler sampler, Operation<BlockPos> original, @Local(argsOnly = true) ServerLevel level) {
 		TerrainField field = RealEarth.terrain();
 		if (field != null && level.getChunkSource().getGenerator() instanceof EarthChunkGenerator) {
-			return new BlockPos(field.startX(), 0, field.startZ());
+			// On land: a start point out at sea or in a lake moves to the nearest shore.
+			int[] land = field.landNear(field.startX(), field.startZ());
+			return new BlockPos(land[0], 0, land[1]);
 		}
 		return original.call(sampler);
 	}

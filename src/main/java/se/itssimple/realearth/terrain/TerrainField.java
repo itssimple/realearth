@@ -239,6 +239,58 @@ public final class TerrainField implements AutoCloseable {
 		return new int[] {x, z};
 	}
 
+	/**
+	 * The nearest dry land to a block position, for a world's first spawn: the position itself if it is
+	 * dry; else, in rings growing outward to 1,000 km, the nearest spot the coarse elevation puts clearly
+	 * above the sea, then the nearest open dry column there at full detail. Returns {x, z}, or the
+	 * position itself when no land is found. Blocks on downloads: for world creation only.
+	 */
+	public int[] landNear(int x, int z) {
+		int[] here = dryColumn(x, z);
+		if (here != null) {
+			return here;
+		}
+		for (double r = 256; r <= 1_000_000 * projection.blocksPerMeter(projection.latitudeAt(z)); r *= 1.5) {
+			int points = (int) Math.min(512, Math.max(16, 2 * Math.PI * r / 400));
+			double bestTurn = -1;
+			for (int i = 0; i < points; i++) {
+				double turn = 2 * Math.PI * i / points;
+				double bx = x + r * Math.sin(turn);
+				double bz = z + r * Math.cos(turn);
+				double lat = projection.latitudeAt(bz);
+				double lon = projection.longitudeAt(bx, lat);
+				if (Double.isNaN(lat) || Double.isNaN(lon) || Math.abs(lat) > 80) {
+					continue;
+				}
+				if (coarseElevationMeters(lat, Projection.wrapLongitude(lon)) > 5) {
+					int[] land = dryColumn((int) bx, (int) bz);
+					if (land != null) {
+						se.itssimple.realearth.RealEarth.LOGGER.info("The start point is in water; spawning on land {} km away", Math.round(r / 1000));
+						return land;
+					}
+				}
+			}
+		}
+		return new int[] {x, z};
+	}
+
+	/** An open dry column within a chunk or so of (x, z), at full detail, or null. */
+	private int[] dryColumn(int x, int z) {
+		try {
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					chunkBlocking((x >> 4) + dx, (z >> 4) + dz, 120);
+				}
+			}
+		} catch (Exception e) {
+			return null;
+		}
+		int[] open = openGround(x, z, 24);
+		ChunkTerrain t = chunkIfReady(open[0] >> 4, open[1] >> 4);
+		int k = ChunkTerrain.index(open[0] & 15, open[1] & 15);
+		return t != null && t.waterTopY[k] == Integer.MIN_VALUE && t.building[k] == 0 ? open : null;
+	}
+
 	/** Real ground elevation in metres at a block column, if its terrain is known; NaN otherwise. */
 	public double groundMetersAt(int x, int z) {
 		ChunkTerrain t = chunkIfReady(x >> 4, z >> 4);
@@ -542,6 +594,34 @@ public final class TerrainField implements AutoCloseable {
 					}
 				}
 				terrain.streets = List.copyOf(streets);
+				// The map's points of interest in the chunk, and its parks, for the life between the buildings.
+				List<ChunkTerrain.Poi> pois = new ArrayList<>();
+				int baseX = chunkX * 16;
+				int baseZ = chunkZ * 16;
+				for (OsmWater.Shapes s : shapes) {
+					for (OsmWater.Poi poi : s.pois()) {
+						if (poi.x() < sx0 - 2 || poi.x() > sx1 + 2 || poi.y() < sy0 - 2 || poi.y() > sy1 + 2) {
+							continue;
+						}
+						double[] b = Buildings.toBlock(projection, poi.x(), poi.y(), baseX + 8);
+						int bx = (int) Math.floor(b[0]);
+						int bz = (int) Math.floor(b[1]);
+						if (bx >= baseX && bx < baseX + 16 && bz >= baseZ && bz < baseZ + 16) {
+							pois.add(new ChunkTerrain.Poi(bx, bz, poi.cls(), poi.subclass(), poi.name()));
+						}
+					}
+					for (OsmWater.Land park : s.parks()) {
+						if (park.maxX() < sx0 || park.minX() > sx1 || park.maxY() < sy0 || park.minY() > sy1) {
+							continue;
+						}
+						for (int k = 0; k < n * n; k++) {
+							if (onGlobe[k] && !terrain.park[k] && BuildingPlan.contains(park.rings(), sx[k], sy[k])) {
+								terrain.park[k] = true;
+							}
+						}
+					}
+				}
+				terrain.pois = List.copyOf(pois);
 				if (config.useRoads || config.useRailways) {
 					long started = se.itssimple.realearth.Perf.start();
 					long minX = Long.MAX_VALUE;

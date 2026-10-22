@@ -18,7 +18,8 @@
     "RegistryLifecycleMixin",
     "DimensionStabilityMixin",
     "SignBlockEntityAccessor",
-    "SlimeSpawnMixin"
+    "SlimeSpawnMixin",
+    "WaterAnimalSpawnMixin"
   ],
   "injectors": {
     "defaultRequire": 1

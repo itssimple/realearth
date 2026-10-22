@@ -48,6 +48,8 @@ final class SelfTest {
 	private static volatile int[] lootrCheck;
 	/** The chunk of central Stockholm with the most beds, for the townsfolk check. */
 	private static volatile int[] homesAt;
+	/** A chunk of Stockholm with a marina, dock or ferry terminal on the map, for the boats check. */
+	private static volatile int[] harbourAt;
 
 	private SelfTest() {
 	}
@@ -314,6 +316,18 @@ final class SelfTest {
 				}).join();
 				server.submit(() -> forceArea(earth, lootrCheck[0], lootrCheck[1], r, false)).join();
 				check(converted >= lootrCheck[2], "Lootr turned the containers with loot into its own (%d of %d)", converted, lootrCheck[2]);
+			}
+			if (harbourAt != null) {
+				// Boats by the harbour, held loaded so their entities can be counted.
+				ServerLevel earth = RealEarth.earthLevel(server);
+				server.submit(() -> forceArea(earth, harbourAt[0], harbourAt[1], 1, true)).join();
+				Thread.sleep(3_000);
+				int boats = server.submit(() -> earth.getEntitiesOfClass(net.minecraft.world.entity.vehicle.boat.AbstractBoat.class,
+					new net.minecraft.world.phys.AABB(harbourAt[0] * 16 - 16, VerticalScale.MIN_Y, harbourAt[1] * 16 - 16, harbourAt[0] * 16 + 32,
+						VerticalScale.MAX_Y, harbourAt[1] * 16 + 32)).size()).join();
+				server.submit(() -> forceArea(earth, harbourAt[0], harbourAt[1], 1, false)).join();
+				log("boats by the harbour in chunk %d,%d: %d", harbourAt[0], harbourAt[1], boats);
+				check(boats >= 1, "boats lie by the map's marinas, docks and ferry terminals (%d)", boats);
 			}
 			if (homesAt != null) {
 				// Townsfolk: villagers come home to beds round a player, and go again once nobody is near.
@@ -1220,6 +1234,37 @@ final class SelfTest {
 			check(found == 9, "the Real Earth advancements load (%d of 9)", found);
 		}
 
+		// Spawning on land: a start point out on Saltsjön moves to the shore.
+		{
+			TerrainField field = RealEarth.terrain();
+			int x = (int) field.projection().blockX(59.3205, 18.1100);
+			int z = (int) field.projection().blockZ(59.3205);
+			int[] land = field.landNear(x, z);
+			ChunkTerrain t = field.chunkIfReady(land[0] >> 4, land[1] >> 4);
+			boolean dry = t != null && t.waterTopY[ChunkTerrain.index(land[0] & 15, land[1] & 15)] == Integer.MIN_VALUE;
+			double km = Math.hypot(land[0] - x, land[1] - z) / field.projection().blocksPerMeter(59.32) / 1000;
+			log("spawn from Saltsjön: land at %d,%d, %.2f km away, %s", land[0], land[1], km, dry ? "dry" : "in water");
+			check(dry && km > 0.05 && km < 3, "a start point in the sea moves to the nearest land (%.2f km)", km);
+		}
+
+		// Fish in lakes above the sea: Siljan, 161 m up.
+		{
+			TerrainField field = RealEarth.terrain();
+			int x = (int) field.projection().blockX(60.88, 14.75);
+			int z = (int) field.projection().blockZ(60.88);
+			var chunk = earth.getChunk(x >> 4, z >> 4);
+			int top = chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, x & 15, z & 15);
+			BlockPos pos = new BlockPos(x, top - 2, z);
+			boolean water = earth.getFluidState(pos).is(net.minecraft.tags.FluidTags.WATER) && earth.getFluidState(pos.above(2)).is(net.minecraft.tags.FluidTags.WATER);
+			int ok = 0;
+			for (long seed = 0; seed < 20; seed++) {
+				ok += net.minecraft.world.entity.animal.fish.WaterAnimal.checkSurfaceWaterAnimalSpawnRules(net.minecraft.world.entity.EntityType.COD, earth,
+					net.minecraft.world.entity.EntitySpawnReason.NATURAL, pos, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
+			}
+			log("fish in Siljan: water surface at Y %d (%s), the spawn rule allows %d of 20", top - 1, water ? "deep enough" : "not water", ok);
+			check(water && ok == 20, "fish may spawn in lakes above the sea (%d of 20)", ok);
+		}
+
 		// Slimes: in slime chunks only well below the sea, as in vanilla; not on the surface.
 		{
 			TerrainField field = RealEarth.terrain();
@@ -1485,6 +1530,74 @@ final class SelfTest {
 				log("building detail: %d shapes in central Stockholm's tile; of %d buildings planned round it, roofs %s; tower caps %s", shapes, seenPlans.size(), roofs, caps);
 				int mapped = roofs.entrySet().stream().filter(e -> !e.getKey().equals("NONE")).mapToInt(java.util.Map.Entry::getValue).sum();
 				check(shapes > 100 && mapped >= 10, "buildings take their roofs as mapped (%d shapes in the tile, %d buildings)", shapes, mapped);
+			}
+
+			// Street life: the map's furniture where it is mapped, and parks with benches and fountains.
+			{
+				java.util.Map<String, Integer> life = new java.util.TreeMap<>();
+				int parkColumns = 0;
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						ChunkTerrain c = field.chunkIfReady(cx, cz);
+						if (c == null) {
+							continue;
+						}
+						LevelChunk chunk = earth.getChunk(cx, cz);
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.building[k] != 0) {
+									continue;
+								}
+								parkColumns += c.park[k] ? 1 : 0;
+								if (c.park[k] && c.way[k] == se.itssimple.realearth.osm.Ways.NONE) {
+									boolean path = false;
+									for (int[] d : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+										path |= c.way[ChunkTerrain.index(x + d[0], z + d[1])] != se.itssimple.realearth.osm.Ways.NONE;
+									}
+									if (path) {
+										life.merge("park edges by paths", 1, Integer::sum);
+									}
+								}
+								int ground = c.topSolidY[k];
+								for (int y = ground + 1; y <= ground + 3; y++) {
+									var state = chunk.getBlockState(new BlockPos(x, y, z));
+									String what = state.is(Blocks.CAULDRON) ? "bins" : state.is(Blocks.WATER_CAULDRON) ? "drinking water"
+										: state.is(Blocks.WAXED_OXIDIZED_CHISELED_COPPER) ? "statues" : state.is(Blocks.CHISELED_QUARTZ_BLOCK) ? "monuments"
+										: state.is(Blocks.SPRUCE_STAIRS) ? "benches" : state.is(Blocks.STONE_BRICK_WALL) ? "fountain columns"
+										: state.is(Blocks.OAK_PRESSURE_PLATE) ? "picnic tables" : c.park[k] && state.is(Blocks.LANTERN) ? "park lamps"
+										: c.park[k] && state.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS) ? "park flowers" : null;
+									if (what != null) {
+										life.merge(what, 1, Integer::sum);
+									}
+								}
+							}
+						}
+					}
+				}
+				log("street life in 13 x 13 chunks of Stockholm: %s; %d park columns", life, parkColumns);
+				// A harbour from central Stockholm's map tile; its chunk generated, with its boats.
+				try {
+					for (var poi : field.map().tile(9014, 4818).get(60, java.util.concurrent.TimeUnit.SECONDS).pois()) {
+						if (java.util.Set.of("marina", "dock", "ferry_terminal").contains(poi.subclass())) {
+							double lat = se.itssimple.realearth.geo.Mercator.latitudeOfSampleY(poi.y());
+							double lon = (poi.x() + 0.5) / se.itssimple.realearth.geo.Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
+							int bx = (int) Math.floor(field.projection().blockX(lat, lon));
+							int bz = (int) Math.floor(field.projection().blockZ(lat));
+							earth.getChunk(bx >> 4, bz >> 4);
+							ChunkTerrain c = field.chunkIfReady(bx >> 4, bz >> 4);
+							if (c != null && c.pois.stream().anyMatch(q -> poi.subclass().equals(q.subclass()))) {
+								harbourAt = new int[] {bx >> 4, bz >> 4};
+								log("harbour: %s %s at %d,%d", poi.subclass(), poi.name(), bx, bz);
+								break;
+							}
+						}
+					}
+				} catch (Exception e) {
+					log("harbour: %s", e);
+				}
+				check(life.getOrDefault("bins", 0) >= 1 && life.getOrDefault("benches", 0) >= 3 && parkColumns > 200,
+					"streets and parks have their furniture (%s)", life);
 			}
 
 			// No lava lakes in the parks: in town, lava at the ground was made a pond.

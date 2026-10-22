@@ -78,6 +78,10 @@ final class ShotTour {
 		// Riddarholmskyrkan's spire from the west.
 		new Shot("stadshuset", 59.3250, 18.0625, 35, 135, 8),
 		new Shot("riddarholmskyrkan", 59.3247, 18.0610, 25, -90, 12),
+		// Street life: Kungstradgarden's park, the market on Hotorget, boats along Strandvagen.
+		new Shot("park", 59.3318, 18.0712, 14, 0, 30),
+		new Shot("market", 59.3346, 18.0629, 8, 0, 35),
+		new Shot("marina", 59.3324, 18.0860, 10, 0, 25),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
 		new Shot("railway", 59.34583, 18.01816, 20, 0, 45),
 		new Shot("road-bridge", 59.3223, 18.0299, 25, 180, 20),

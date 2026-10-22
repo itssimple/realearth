@@ -90,6 +90,10 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
     [Lootr](https://modrinth.com/mod/lootr) installed each player gets their own. Barrels that are a villager's
     job block stay empty. Some stoves have fuel left in them, and some bookshelves are chiseled ones with books.
   - Between them: wells, farm plots, bells on their posts, hay stores, and street lamps along the streets.
+  - **Street life from the map**, where it is mapped: bins, drinking fountains, bus and tram stops with their names
+    on a post and a bench, statues, monuments, picnic tables, sandpits in playgrounds, market stalls on market
+    squares, boats by marinas, docks and ferry terminals, a minecart on the rails at stations. Parks get benches
+    along their paths and edges, lamps, flower beds, and now and then a fountain.
   - Each building stands level, on the ground under its whole footprint: a foundation on the low side, dug in on
     the high side.
 - **Villages where buildings aren't mapped.** Built-up land without mapped buildings (ESA WorldCover) gets vanilla
@@ -262,7 +266,9 @@ cities.
 - **Pillager outposts** stay out of towns (built-up land or mapped buildings round them); patrols, raids and
   other mobs spawn as in vanilla.
 
-**Mobs.** Vanilla's spawn rules measure from the sea level, so they work at Earth's, with one exception:
+**Mobs.** Fish, squid and dolphins spawn near the sea level; in a lake or river above the sea (Siljan is 161 m
+up), its own surface counts instead, so inland waters have fish. Vanilla's other spawn rules measure from the
+sea level, so they work at Earth's, with one exception:
 slimes used fixed heights (slime chunks below Y 40, swamps between Y 50 and 70), which put them on the surface
 of every slime chunk. They are measured from Earth's sea level instead: slime chunks 23 blocks under the sea,
 as in vanilla.

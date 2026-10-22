@@ -56,6 +56,14 @@ public final class ChunkTerrain {
 	public final int[] roofY = new int[SPAN * SPAN];
 	/** Named streets near this chunk, for the signs at its kerbs. */
 	public volatile java.util.List<se.itssimple.realearth.osm.OsmWater.Street> streets = java.util.List.of();
+	/** A point of interest from the map in this chunk, at a world block column. */
+	public record Poi(int x, int z, String cls, String subclass, String name) {
+	}
+
+	/** The map's points of interest in this chunk: benches, bins, bus stops, statues, markets, harbours. */
+	public volatile java.util.List<Poi> pois = java.util.List.of();
+	/** Columns in a park, garden or playground. */
+	public final boolean[] park = new boolean[SPAN * SPAN];
 	/** Beds built in this chunk, as world x, y, z of the foot: where villagers move in. */
 	public volatile java.util.List<int[]> beds = java.util.List.of();
 

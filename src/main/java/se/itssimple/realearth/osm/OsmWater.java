@@ -32,7 +32,9 @@ import se.itssimple.realearth.geo.Mercator;
 public final class OsmWater {
 	public static final int ZOOM = 14;
 	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building", "poi", "landuse", "place",
-		"transportation_name");
+		"transportation_name", "landcover");
+	/** Land cover kinds kept as parks: green the town keeps for people. */
+	private static final Set<String> PARKS = Set.of("park", "garden", "village_green", "recreation_ground", "playground");
 	private static final Set<String> PLACE_LAYER = Set.of("place");
 
 	/** A water area: rings of interleaved x,y in global z15 sample coordinates. Even-odd filled. */
@@ -94,11 +96,13 @@ public final class OsmWater {
 	 * false when the map has no tile or could not be fetched.
 	 */
 	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings, List<Poi> pois,
-		List<Land> landuse, List<Place> places, List<Street> streets, List<Part> parts) {
+		List<Land> landuse, List<Place> places, List<Street> streets, List<Part> parts, List<Land> parks) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
-		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+			List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
-		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+			List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -244,6 +248,7 @@ public final class OsmWater {
 		List<Place> places = new ArrayList<>();
 		List<Street> streets = new ArrayList<>();
 		List<Part> raised = new ArrayList<>();
+		List<Land> parks = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
 			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
 				continue;
@@ -319,6 +324,29 @@ public final class OsmWater {
 				}
 				continue;
 			}
+			boolean park = f.layer().equals("landcover") && PARKS.contains(f.string("subclass"))
+				|| f.layer().equals("landuse") && "playground".equals(cls);
+			if (f.layer().equals("landcover") && !park) {
+				continue;
+			}
+			if (park && f.type() == VectorTile.POLYGON) {
+				double minX = Double.MAX_VALUE;
+				double minY = Double.MAX_VALUE;
+				double maxX = -Double.MAX_VALUE;
+				double maxY = -Double.MAX_VALUE;
+				for (double[] ring : parts) {
+					for (int i = 0; i < ring.length; i += 2) {
+						minX = Math.min(minX, ring[i]);
+						maxX = Math.max(maxX, ring[i]);
+						minY = Math.min(minY, ring[i + 1]);
+						maxY = Math.max(maxY, ring[i + 1]);
+					}
+				}
+				parks.add(new Land(parts, f.layer().equals("landuse") ? cls : f.string("subclass"), minX, minY, maxX, maxY));
+				if (f.layer().equals("landcover")) {
+					continue;
+				}
+			}
 			if (f.layer().equals("landuse") && f.type() == VectorTile.POLYGON && cls != null) {
 				double minX = Double.MAX_VALUE;
 				double minY = Double.MAX_VALUE;
@@ -377,7 +405,7 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets, raised);
+		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets, raised, parks);
 	}
 
 	/** Cities, towns, villages and their districts; not islands, countries, states or lone farms. */

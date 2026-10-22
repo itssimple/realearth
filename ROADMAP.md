@@ -17,15 +17,14 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
    per second, with a User-Agent, as its usage policy requires. The car game has a client for it.
 4. **Real day length and sun.** Sunrise and sunset from latitude and today's date: midnight sun in Kiruna in
    June, six-hour days in Stockholm in December. Optionally seasonal snow cover.
-5. **Spawn safety.** If the start point is in the sea, spawn on the nearest land.
+5. **Spawn safety.** Done: a start point in the sea or a lake spawns on the nearest dry land.
 6. **Towns that feel lived in.** Done: loot in chests, pantries and shop stock, Lootr-ready; buildings divided
    by what the map says they are (flats in stairwell sections with rooms, shops in ground-floor units, halls,
    offices, warehouses, houses), with turning stairs, a door in every wall and furniture by room; place
    names on screen, street and shop signs; villagers kept round each player. Next:
-   1. **Places from the map.** Parks with fountains and benches,
-      cemeteries, allotments with crops and animals, marketplaces with stalls and a wandering trader,
-      stations with minecarts on the platform, harbours with boats; cartographers' chests holding a map of
-      their own town.
+   1. **Places from the map.** Done: street furniture where mapped, parks with benches, lamps, flowers and
+      fountains, market stalls, boats by harbours, minecarts at stations. Next: cemeteries, allotments with
+      crops and animals, a wandering trader at markets, cartographers' chests holding a map of their own town.
    2. **More villagers.** An iron golem at bell squares; villagers walking the streets by day rather than
       only round their homes.
    3. **Rooms and details.** Chairs at tables, chimney smoke (a campfire under a chimney on some roofs),

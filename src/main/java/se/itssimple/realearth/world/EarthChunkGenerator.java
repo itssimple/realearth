@@ -398,6 +398,7 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		long painting = se.itssimple.realearth.Perf.start();
 		int[] buildingTop = BuildingPainter.paint(chunk, t, baseX, baseZ);
 		TownFeatures.place(chunk, t, baseX, baseZ, buildingTop);
+		StreetLife.place(chunk, t, baseX, baseZ, buildingTop);
 		se.itssimple.realearth.Perf.stop("fill.buildings", painting);
 
 		Heightmap oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
@@ -737,6 +738,11 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		long started = se.itssimple.realearth.Perf.start();
 		NaturalSpawner.spawnMobsForChunkGeneration(region, biome, center, random);
 		moveInVillagers(region, center);
+		TerrainField field = RealEarth.terrain();
+		ChunkTerrain life = field == null ? null : field.chunkIfReady(center.x(), center.z());
+		if (life != null && !life.pois.isEmpty()) {
+			StreetLife.entities(region, life, center.getMinBlockX(), center.getMinBlockZ());
+		}
 		se.itssimple.realearth.Perf.stop("mobs", started);
 	}
 
