@@ -32,8 +32,11 @@ public final class Townsfolk {
 	private static final int EVERY = 100;
 	/** The town round a player: this many chunks each way. */
 	private static final int AROUND = 3;
-	/** Room for one villager per this many beds in the town round a player. */
-	private static final int BEDS_EACH = 4;
+	/**
+	 * Room for one villager per this many beds in the town round a player: as many villagers as there
+	 * were when only one bed in ten was a real bed.
+	 */
+	private static final int BEDS_EACH = 40;
 	/** At most this many come home to the town round a player each time it is looked at. */
 	private static final int AT_A_TIME = 3;
 	/** Nobody comes home to a bed this close to a player, in blocks: they'd appear before their eyes. */

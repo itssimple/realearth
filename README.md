@@ -76,12 +76,11 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
     - **Offices** on commercial land, **warehouses** (one tall floor of stores) on industrial land, and **houses**
       where a home is small: one household, with stairs if there is room, else a ladder.
   - Furnished by room: a bed in every bedroom, a stove, sink and worktop in kitchens, a table and rug, bookshelves,
-    flower pots, lanterns, and villager job blocks. Beds, chests and barrels are block entities (drawn as models
-    or kept in memory), so only about one bed in ten is a real bed, the rest made up of wool under a blanket,
-    and chests and barrels are kept few. A villager moves into about one chunk of town in twenty, into a real
-    bed, and takes up the trade it finds. Round each player more come home to beds out of sight, one for every
-    four real beds in the town within about 50 blocks, up to `townsfolk` (24): a few in a village, a busy
-    city centre; children among them.
+    flower pots, lanterns, and villager job blocks. Every bed is a real bed; chests and barrels (block entities,
+    kept in memory) are kept few. A villager moves into about one chunk of town in twenty, into a bed, and takes
+    up the trade it finds. Round each player more come home to beds out of sight, one for every forty beds in
+    the town within about 50 blocks, up to `townsfolk` (24): a few in a village, a busy city centre; children
+    among them.
     Once every player is far away they go again, unless someone has traded with one, named it or leashed it.
     So the streets near you are busy, and a city of thousands of beds doesn't slow the server down.
   - **Loot.** House chests hold what a village house's chest of the same climate holds, pantry barrels household
@@ -179,12 +178,14 @@ been work without a connection. To play somewhere new offline, or to have a serv
 arrive, run `/earth download 5000` there first.
 
 **The running performance log** (`perfLogSeconds`, or `/earth perf log 5`) writes a few `[perf]` lines to
-`logs/latest.log` every few seconds: for each player on the Earth where they are, how fast they move and how
+`logs/realearth-perf.log` every few seconds (begun afresh each session; not in `latest.log`, and at debug level
+for setups that log debug): for each player on the Earth where they are, how fast they move and how
 many chunks within their view the server has not generated yet; how long chunks take from their first
 generation step to their last; the ticks; Real Earth's stages; downloads, threads and waits. The client adds
 `[perf client]` lines: chunks within its render distance it has not got, how long chunks took to arrive,
 frames per second, sections waiting to be built. When the server goes five seconds without finishing a tick,
-the log says what its thread, and every thread in Real Earth's code, is doing.
+the log says what its thread, and every thread in Real Earth's code, is doing (and `latest.log` gets one line
+saying so).
 
 Each tile or byte range is downloaded once at a time: whatever else asks for it meanwhile waits for that
 download. Retries, rate limits (HTTP 429) and failures are logged once a minute when they happen, and
@@ -367,10 +368,10 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `buildingDetailUrl`, `buildingDetailRelease`, `buildingDetailCatalog` | Overture's S3, `latest`, Overture's STAC | Where those tiles are, and which monthly release |
 | `placeTitles` | true | Show a town's name on walking into it, and the district's above the hotbar |
 | `mapWaypoints` | true | Towns and stations round you as waypoints in Xaero's Minimap (read on the client) |
-| `perfLogSeconds` | 0 | Every this many seconds, `[perf]` lines in the game log on how chunk loading keeps up (0 is off); see "The running performance log" above |
+| `perfLogSeconds` | 0 | Every this many seconds, `[perf]` lines in `logs/realearth-perf.log` on how chunk loading keeps up (0 is off); see "The running performance log" above |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
 | `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
-| `townsfolk` | 24 | Most villagers kept in the town round each player (one per four real beds there); 0 turns it off |
+| `townsfolk` | 24 | Most villagers kept in the town round each player (one per forty beds there); 0 turns it off |
 | `detectLakes` | true | Flat-lake detection, where map water isn't available |
 | `lakeWindowSamples`, `lakeFlatnessMeters` | 17, 0.02 | How large and how flat a lake must be |
 | `maxLakeDepthMeters` | 12 | Deepest carved lake bed |

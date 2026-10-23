@@ -510,17 +510,11 @@ final class BuildingPainter {
 				// The head stands against the wall (facing it), the foot one block out.
 				boolean foot = roll < 0;
 				double look = foot ? -1 - roll : roll;
-				if (look >= Interior.REAL_BED) {
-					// Made up of wool, under a blanket: a bed to look at, not a block entity.
-					set(chunk, pos, x, y, z, state(foot ? WOOL[0] : Blocks.WHITE_WOOL));
-					set(chunk, pos, x, y + 1, z, state(foot ? RUGS[colour % RUGS.length] : Blocks.WHITE_CARPET));
-					break;
-				}
 				Direction head = foot ? DIRS[placed.facing()] : DIRS[(placed.facing() + 2) % 4];
 				set(chunk, pos, x, y, z, with(with(state(BEDS[colour]), BlockStateProperties.HORIZONTAL_FACING, head), BlockStateProperties.BED_PART,
 					foot ? BedPart.FOOT : BedPart.HEAD));
-				if (foot) {
-					beds.add(new int[] {wx, y, wz});
+				if (foot && look < Interior.MOVE_IN) {
+					beds.add(new int[] {wx, y, wz}); // one a villager moves into as the chunk is made
 				}
 			}
 			case CHEST -> loot(set(chunk, pos, x, y, z, with(state(Blocks.CHEST), BlockStateProperties.HORIZONTAL_FACING, away)),

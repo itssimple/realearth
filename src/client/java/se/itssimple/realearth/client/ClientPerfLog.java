@@ -47,10 +47,10 @@ final class ClientPerfLog {
 			}
 		}
 		int all = (2 * view + 1) * (2 * view + 1);
-		RealEarth.LOGGER.info("[perf client] {} fps; render distance {}: {} of {} chunks not here yet{}; arrived {} (first generation step to here), sending {}"
-				+ " (last step to here), {} from disk; {} sections waiting to be built; {}",
+		PerfLog.write(String.format(java.util.Locale.ROOT, "[perf client] %d fps; render distance %d: %d of %d chunks not here yet%s; arrived %s (first generation"
+				+ " step to here), sending %s (last step to here), %d from disk; %d sections waiting to be built; %s",
 			mc.getFps(), view, missing, all, missing == 0 ? "" : ", nearest " + nearest + " chunks away", ChunkTimes.TO_CLIENT.take(),
 			ChunkTimes.SENDING.take(), ChunkTimes.takeFromDisk(), mc.levelRenderer.getSectionRenderDispatcher().getCompileQueueSize(),
-			mc.levelRenderer.getSectionStatistics());
+			mc.levelRenderer.getSectionStatistics()));
 	}
 }

@@ -73,7 +73,7 @@ public final class EarthCommand {
 						int seconds = com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "seconds");
 						se.itssimple.realearth.RealEarth.config().perfLogSeconds = seconds;
 						ctx.getSource().sendSuccess(() -> Component.literal(seconds == 0 ? "Performance log off."
-							: "Performance log every " + seconds + " s, in the game log as [perf] lines (until restart; perfLogSeconds in the config keeps it)."), false);
+							: "Performance log every " + seconds + " s, in logs/realearth-perf.log (until restart; perfLogSeconds in the config keeps it)."), false);
 						return 1;
 					})))
 				.then(Commands.literal("reset").executes(ctx -> {

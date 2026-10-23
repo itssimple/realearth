@@ -74,6 +74,8 @@ final class ShotTour {
 		new Shot("inside-flat", 59.3293, 18.0686, 0, 0, 15),
 		new Shot("inside-front", 59.3293, 18.0686, 0, 0, 5),
 		new Shot("inside-tower", 59.3293, 18.0686, 0, 0, 10),
+		// A bedroom in Fagersjo: real beds.
+		new Shot("inside-bedroom", 59.2465, 18.0623, 0, 0, 25),
 		// Landmarks with mapped roofs and parts: the City Hall across the water from Riddarholmen, and
 		// Riddarholmskyrkan's spire from the west.
 		new Shot("stadshuset", 59.3250, 18.0625, 35, 135, 8),
@@ -199,7 +201,7 @@ final class ShotTour {
 
 	/**
 	 * A place to stand inside a building near (x, z): on a stairwell's landing facing the flights
-	 * ("stairs"), in a shop ("shop"), or in a living room on the first floor up ("flat"); with the
+	 * ("stairs"), in a shop ("shop"), in a bedroom ("bedroom"), or in a living room on the first floor up ("flat"); with the
 	 * yaw to look across it in look[0].
 	 */
 	private static BlockPos findInterior(ServerLevel level, TerrainField field, int x, int z, String what, float[] look) {
@@ -304,8 +306,9 @@ final class ShotTour {
 						}
 						for (var room : inside.rooms) {
 							boolean wanted = what.equals("shop") ? room.kind == se.itssimple.realearth.terrain.Interior.Kind.SHOP
+								: what.equals("bedroom") ? room.kind == se.itssimple.realearth.terrain.Interior.Kind.BED
 								: room.kind == se.itssimple.realearth.terrain.Interior.Kind.LIVING && plan.floors > 1;
-							if (!wanted || room.size() < 12) {
+							if (!wanted || room.size() < (what.equals("bedroom") ? 6 : 12)) {
 								continue;
 							}
 							var cells = inside.cellsOf(room);
@@ -324,8 +327,29 @@ final class ShotTour {
 									far = c;
 								}
 							}
+							int floor = what.equals("shop") || what.equals("bedroom") && plan.floors == 1 ? 0 : 1;
+							if (what.equals("bedroom")) {
+								// Opposite the bed, looking at it.
+								int[] bed = null;
+								for (int[] c : cells) {
+									var placed = inside.placedAt(c[0], c[1], floor);
+									if (placed != null && placed.item() == se.itssimple.realearth.terrain.Interior.Item.BED) {
+										bed = c;
+									}
+								}
+								if (bed == null) {
+									continue;
+								}
+								far = cells.get(0);
+								for (int[] c : cells) {
+									if (Math.hypot(c[0] - bed[0], c[1] - bed[1]) > Math.hypot(far[0] - bed[0], far[1] - bed[1])) {
+										far = c;
+									}
+								}
+								cx = bed[0];
+								cz = bed[1];
+							}
 							look[0] = yaw(cx - far[0], cz - far[1]);
-							int floor = what.equals("shop") ? 0 : 1;
 							return new BlockPos(far[0], plan.floorY + floor * plan.storey + 1, far[1]);
 						}
 					}

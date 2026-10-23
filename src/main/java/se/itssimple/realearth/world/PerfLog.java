@@ -15,8 +15,9 @@ import se.itssimple.realearth.data.Net;
 import se.itssimple.realearth.terrain.TerrainField;
 
 /**
- * The running performance log: every {@code perfLogSeconds} (0 is off), a few lines in the game log
- * on what the server did since the last ones, for working out why chunks come slowly. Per player on
+ * The running performance log: every {@code perfLogSeconds} (0 is off), a few lines in
+ * logs/realearth-perf.log (and at debug level in the game log, not in latest.log) on what the server
+ * did since the last ones, for working out why chunks come slowly. Per player on
  * the Earth: where, how fast, and how many chunks within their view are still not generated; then
  * the ticks, the chunks generated and how long they took, Real Earth's stages, downloads and waits.
  * The client writes its own lines (chunks it still lacks, frame rate, sections to build).
@@ -26,6 +27,8 @@ public final class PerfLog {
 	private static final Map<String, long[]> NET_BEFORE = new HashMap<>();
 	private static final Map<UUID, double[]> LAST_POSITION = new HashMap<>();
 	private static long lastNanos;
+	private static java.io.PrintWriter file;
+	private static final java.time.format.DateTimeFormatter CLOCK = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
 	/** Watches the server thread while the log is on: see {@link #watch}. */
 	private static Thread watchdog;
 	private static volatile int lastTick;
@@ -120,7 +123,31 @@ public final class PerfLog {
 			lines.add("  " + line);
 		}
 		for (String line : lines) {
-			RealEarth.LOGGER.info("[perf] {}", line);
+			write("[perf] " + line);
+		}
+	}
+
+	/**
+	 * A line of the performance log: to logs/realearth-perf.log, begun afresh each session, and at debug
+	 * level to the game's own log. Client and server (in singleplayer one process) share the file.
+	 */
+	public static synchronized void write(String line) {
+		RealEarth.LOGGER.debug(line);
+		if (file == null) {
+			java.nio.file.Path path = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("logs").resolve("realearth-perf.log");
+			try {
+				java.nio.file.Files.createDirectories(path.getParent());
+				file = new java.io.PrintWriter(java.nio.file.Files.newBufferedWriter(path, java.nio.charset.StandardCharsets.UTF_8), true);
+				RealEarth.LOGGER.info("Real Earth's performance log is in {}", path);
+			} catch (java.io.IOException e) {
+				RealEarth.LOGGER.warn("Could not open the performance log {}: {}", path, e.toString());
+				return;
+			}
+		}
+		String[] parts = line.split("\\R");
+		String stamp = "[" + java.time.LocalTime.now().format(CLOCK) + "] [" + Thread.currentThread().getName() + "] ";
+		for (String part : parts) {
+			file.println(stamp + part);
 		}
 	}
 
@@ -149,7 +176,7 @@ public final class PerfLog {
 				long quiet = (System.nanoTime() - lastTickNanos) / 1_000_000_000L;
 				if (quiet < 5) {
 					if (stalledAt >= 0) {
-						RealEarth.LOGGER.warn("[perf] the server ticks again after tick {}", stalledAt);
+						write("[perf] the server ticks again after tick " + stalledAt);
 						stalledAt = -1;
 					}
 					continue;
@@ -168,7 +195,8 @@ public final class PerfLog {
 							}
 						}
 					});
-					RealEarth.LOGGER.warn(b.toString());
+					write(b.toString());
+					RealEarth.LOGGER.warn("Real Earth: the server has not finished a tick for {} s; what it is doing is in logs/realearth-perf.log", quiet);
 				}
 			}
 		}, "RealEarth-StallWatch");
@@ -193,6 +221,12 @@ public final class PerfLog {
 	}
 
 	public static void clear() {
+		synchronized (PerfLog.class) {
+			if (file != null) {
+				file.close();
+				file = null;
+			}
+		}
 		if (watchdog != null) {
 			watchdog.interrupt();
 			watchdog = null;

@@ -102,7 +102,7 @@ public final class EarthConfig {
 	/** Towns and railway stations near you as waypoints in Xaero's Minimap, when it is installed (read on the client). */
 	public boolean mapWaypoints = true;
 	/**
-	 * Every this many seconds, a few lines in the game log on how chunk generation is keeping up: where
+	 * Every this many seconds, a few lines in logs/realearth-perf.log on how chunk generation is keeping up: where
 	 * each player is and how fast they move, chunks still missing round them, generation and arrival
 	 * times, downloads and waits. 0 is off. Also /earth perf log &lt;seconds&gt;.
 	 */
@@ -118,7 +118,7 @@ public final class EarthConfig {
 	public double villagerChance = 0.2;
 	/**
 	 * Most villagers kept in the town round each player (about 50 blocks each way). Within that, one for
-	 * every four real beds there, so villages stay quiet and city centres are busy. They come home to beds
+	 * every forty beds there, so villages stay quiet and city centres are busy. They come home to beds
 	 * out of sight and go again once everyone is far away, unless traded with. 0 turns it off.
 	 */
 	public int townsfolk = 24;

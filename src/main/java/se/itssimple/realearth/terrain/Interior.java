@@ -121,11 +121,11 @@ public final class Interior {
 	}
 
 	/**
-	 * Beds, chests and barrels are block entities, and a city has tens of thousands of rooms: only about
-	 * one bed in this many is a real bed (villagers move into those); the rest are made up of wool and a
-	 * blanket. Chests, pantries and stoves are kept rare the same way.
+	 * Every bed is a real bed, but a city has tens of thousands: a villager moves into about one in this
+	 * many as its chunk is generated, so a town doesn't fill up at once. Chests, pantries and stoves are
+	 * kept rare by the room's roll.
 	 */
-	public static final double REAL_BED = 0.1;
+	public static final double MOVE_IN = 0.1;
 
 	/** Longest a stairwell section is before it is cut in two, in blocks. */
 	static final int SECTION_MAX = 24;
@@ -1552,7 +1552,7 @@ public final class Interior {
 
 	/**
 	 * Whether a thing stops you walking, so it must not stand in the way: everything but rugs, flower
-	 * pots and pews (you step over those). Beds count, the made-up ones being a full block high.
+	 * pots and pews (you step over those). Beds count.
 	 */
 	private static boolean blocks(Item item) {
 		return item != Item.RUG && item != Item.FLOWER && item != Item.PEW;

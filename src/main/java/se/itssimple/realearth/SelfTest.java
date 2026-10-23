@@ -1110,7 +1110,8 @@ final class SelfTest {
 					(tc1 - tc0) / 1_000_000, sections, blockEntities, Perf.report());
 				long villagers = Perf.total("villagers");
 				check(villagers >= 2 && villagers <= 15, "a city gets a few villagers, not a crowd: %d in 100 chunks", villagers);
-				check(blockEntities < 100 * 12, "a city's rooms keep block entities few: %d in 100 chunks", blockEntities);
+				// Every bed is a real bed (two block entities); chests and barrels stay few.
+				check(blockEntities < 100 * 25, "a city's rooms keep block entities few: %d in 100 chunks", blockEntities);
 			}
 		}));
 
