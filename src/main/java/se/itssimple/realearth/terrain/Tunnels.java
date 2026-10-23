@@ -454,6 +454,11 @@ public final class Tunnels {
 				run.portalStart ? "" : " (junction at start)", run.portalEnd ? "" : " (junction at end)",
 				Math.round(lat * 1e4) / 1e4, Math.round(Projection.wrapLongitude((mid[0] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0) * 1e4) / 1e4,
 				Math.round(meters), run.points.length / 2, Math.round(start), Math.round(end), Math.round(floor[0]), Math.round(floor[n - 1]), Math.round(lowest));
+			int last = run.points.length - 2;
+			se.itssimple.realearth.RealEarth.LOGGER.info("[tunnels]   ends {},{} and {},{}",
+				Math.round(Mercator.latitudeOfSampleY(run.points[1]) * 1e5) / 1e5, Math.round(Projection.wrapLongitude((run.points[0] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0) * 1e5) / 1e5,
+				Math.round(Mercator.latitudeOfSampleY(run.points[last + 1]) * 1e5) / 1e5,
+				Math.round(Projection.wrapLongitude((run.points[last] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0) * 1e5) / 1e5);
 		}
 		return floor;
 	}
