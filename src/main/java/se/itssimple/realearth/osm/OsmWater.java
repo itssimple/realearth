@@ -33,8 +33,10 @@ public final class OsmWater {
 	public static final int ZOOM = 14;
 	private static final Set<String> LAYERS = Set.of("water", "waterway", "transportation", "building", "poi", "landuse", "place",
 		"transportation_name", "landcover");
-	/** Land cover kinds kept as parks: green the town keeps for people. */
-	private static final Set<String> PARKS = Set.of("park", "garden", "village_green", "recreation_ground", "playground");
+	/** Land cover kinds kept as parks and greens: the town's green for people (parks), and what is grown or laid out there. */
+	private static final Set<String> PARKS = Set.of("park", "garden", "village_green", "recreation_ground", "playground", "allotments", "flowerbed");
+	/** Land use kinds kept with them. */
+	private static final Set<String> GREEN_LANDUSE = Set.of("playground", "cemetery", "pitch");
 	private static final Set<String> PLACE_LAYER = Set.of("place");
 
 	/** A water area: rings of interleaved x,y in global z15 sample coordinates. Even-odd filled. */
@@ -329,7 +331,7 @@ public final class OsmWater {
 				continue;
 			}
 			boolean park = f.layer().equals("landcover") && PARKS.contains(f.string("subclass"))
-				|| f.layer().equals("landuse") && "playground".equals(cls);
+				|| f.layer().equals("landuse") && GREEN_LANDUSE.contains(cls);
 			if (f.layer().equals("landcover") && !park) {
 				continue;
 			}

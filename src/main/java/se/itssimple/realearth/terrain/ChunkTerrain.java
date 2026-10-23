@@ -85,6 +85,12 @@ public final class ChunkTerrain {
 	public volatile java.util.List<Poi> pois = java.util.List.of();
 	/** Columns in a park, garden or playground. */
 	public final boolean[] park = new boolean[SPAN * SPAN];
+	/** What else the ground of a column is laid out as: {@link #CEMETERY}, {@link #ALLOTMENT}, {@link #FLOWERBED}, {@link #PITCH}, or 0. */
+	public final byte[] grounds = new byte[SPAN * SPAN];
+	public static final byte CEMETERY = 1;
+	public static final byte ALLOTMENT = 2;
+	public static final byte FLOWERBED = 3;
+	public static final byte PITCH = 4;
 	/** Beds built in this chunk, as world x, y, z of the foot: where villagers move in. */
 	public volatile java.util.List<int[]> beds = java.util.List.of();
 

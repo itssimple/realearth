@@ -92,8 +92,13 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   - Between them: wells, farm plots, bells on their posts, hay stores, and street lamps along the streets.
   - **Street life from the map**, where it is mapped: bins, drinking fountains, bus and tram stops with their names
     on a post and a bench, statues, monuments, picnic tables, sandpits in playgrounds, market stalls on market
-    squares, boats by marinas, docks and ferry terminals, a minecart on the rails at stations. Parks get benches
-    along their paths and edges, lamps, flower beds, and now and then a fountain.
+    squares and a trader who keeps a stall there, boats by marinas, docks and ferry terminals, a minecart on the
+    rails at stations. Parks get benches along their paths and edges, lamps, flower beds, and now and then a
+    fountain; cemeteries rows of headstones before their graves, allotments plots of crops between paths (watered,
+    so they keep growing), flower beds their flowers, sports pitches their white lines.
+  - **Maps of your own town** in bookshops and general stores: a filled map of the town round the shop, named
+    after it ("Map of Gamla stan, Stockholm"), with a mark where you found it (`realearth:town_map`, a loot
+    function a datapack can use too).
   - Each building stands level, on the ground under its whole footprint: a foundation on the low side, dug in on
     the high side.
 - **Villages where buildings aren't mapped.** Built-up land without mapped buildings (ESA WorldCover) gets vanilla

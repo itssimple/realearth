@@ -142,6 +142,16 @@
         {
           "type": "minecraft:item",
           "name": "minecraft:compass"
+        },
+        {
+          "type": "minecraft:item",
+          "name": "minecraft:map",
+          "weight": 3,
+          "functions": [
+            {
+              "function": "realearth:town_map"
+            }
+          ]
         }
       ]
     }

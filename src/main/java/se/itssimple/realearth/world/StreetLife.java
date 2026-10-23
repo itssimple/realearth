@@ -58,6 +58,74 @@ final class StreetLife {
 			}
 		}
 		park(chunk, t, buildingTop, pos, baseX, baseZ);
+		grounds(chunk, t, buildingTop, pos, baseX, baseZ);
+	}
+
+	private static final Block[] CROPS = {Blocks.WHEAT, Blocks.CARROTS, Blocks.POTATOES, Blocks.BEETROOTS};
+	private static final Block[] HEADSTONES = {Blocks.STONE_BRICK_WALL, Blocks.MOSSY_STONE_BRICK_WALL, Blocks.ANDESITE_WALL, Blocks.STONE_BRICK_WALL};
+
+	/**
+	 * Ground laid out for something: a cemetery's rows of headstones before their graves, allotments'
+	 * plots of crops (watered, so the farmland stays wet) between paths, flower beds full of flowers, and
+	 * the white lines round a sports pitch.
+	 */
+	private static void grounds(ChunkAccess chunk, ChunkTerrain t, int[] buildingTop, BlockPos.MutableBlockPos pos, int baseX, int baseZ) {
+		for (int z = 0; z < 16; z++) {
+			for (int x = 0; x < 16; x++) {
+				int k = ChunkTerrain.index(x, z);
+				byte ground = t.grounds[k];
+				if (ground == 0 || !open(t, buildingTop, x, z) || t.way[k] != Ways.NONE) {
+					continue;
+				}
+				int y = t.topSolidY[k];
+				int wx = baseX + x;
+				int wz = baseZ + z;
+				double h = GeoNoise.hash(wx, 104, wz);
+				switch (ground) {
+					case ChunkTerrain.CEMETERY -> {
+						if (Math.floorMod(wx, 3) == 0 && Math.floorMod(wz, 3) == 0) {
+							set(chunk, pos, x, y + 1, z, (h < 0.1 ? Blocks.CHISELED_STONE_BRICKS : HEADSTONES[(int) (h * HEADSTONES.length)]).defaultBlockState());
+						} else if (Math.floorMod(wx, 3) == 0 && Math.floorMod(wz, 3) == 1) {
+							set(chunk, pos, x, y, z, Blocks.COARSE_DIRT.defaultBlockState());
+							if (h < 0.3) {
+								set(chunk, pos, x, y + 1, z, (h < 0.15 ? Blocks.POPPY : Blocks.WHITE_TULIP).defaultBlockState());
+							}
+						}
+					}
+					case ChunkTerrain.ALLOTMENT -> {
+						if (Math.floorMod(wx, 9) == 4 && Math.floorMod(wz, 9) == 4) {
+							set(chunk, pos, x, y, z, Blocks.WATER.defaultBlockState());
+							set(chunk, pos, x, y + 1, z, AIR);
+						} else if (Math.floorMod(wx, 6) == 0 || Math.floorMod(wz, 6) == 0) {
+							set(chunk, pos, x, y, z, Blocks.COARSE_DIRT.defaultBlockState());
+							set(chunk, pos, x, y + 1, z, AIR);
+						} else {
+							Block crop = CROPS[(int) (GeoNoise.hash(Math.floorDiv(wx, 6), 105, Math.floorDiv(wz, 6)) * CROPS.length)];
+							set(chunk, pos, x, y, z, Blocks.FARMLAND.defaultBlockState().setValue(BlockStateProperties.MOISTURE, 7));
+							BlockState plant = crop == Blocks.BEETROOTS ? crop.defaultBlockState().setValue(BlockStateProperties.AGE_3, 1 + (int) (h * 3))
+								: crop.defaultBlockState().setValue(BlockStateProperties.AGE_7, 2 + (int) (h * 6));
+							set(chunk, pos, x, y + 1, z, plant);
+						}
+					}
+					case ChunkTerrain.FLOWERBED -> {
+						if (h < 0.7 && chunk.getBlockState(pos.set(x, y, z)).is(Blocks.GRASS_BLOCK)) {
+							set(chunk, pos, x, y + 1, z, FLOWERS[(int) (GeoNoise.hash(wx, 106, wz) * FLOWERS.length)].defaultBlockState());
+						}
+					}
+					case ChunkTerrain.PITCH -> {
+						for (int d = 0; d < 4; d++) {
+							if (t.grounds[ChunkTerrain.index(x + DX[d], z + DZ[d])] != ChunkTerrain.PITCH) {
+								set(chunk, pos, x, y, z, Blocks.WHITE_CONCRETE.defaultBlockState());
+								set(chunk, pos, x, y + 1, z, AIR);
+								break;
+							}
+						}
+					}
+					default -> {
+					}
+				}
+			}
+		}
 	}
 
 	/** Open ground: in this chunk, dry, no building, no bridge deck, nothing built on it already. */
@@ -346,6 +414,7 @@ final class StreetLife {
 			int z = poi.z() - baseZ;
 			switch (what) {
 				case "marina", "dock", "ferry_terminal" -> boats(region, t, baseX, baseZ, x, z, what.equals("marina") ? 3 : 1);
+				case "marketplace" -> trader(region, t, baseX, baseZ, x, z);
 				case "station", "halt" -> {
 					if ("railway".equals(poi.cls())) {
 						minecart(region, t, baseX, baseZ, x, z);
@@ -383,6 +452,23 @@ final class StreetLife {
 					placed++;
 				}
 			}
+		}
+	}
+
+	/** A trader keeping a stall at the market, there for good. */
+	private static void trader(net.minecraft.server.level.WorldGenRegion region, ChunkTerrain t, int baseX, int baseZ, int x, int z) {
+		if (x < 0 || x > 15 || z < 0 || z > 15) {
+			return;
+		}
+		int k = ChunkTerrain.index(x, z);
+		if (t.building[k] != 0 || t.waterTopY[k] != Integer.MIN_VALUE) {
+			return;
+		}
+		var trader = net.minecraft.world.entity.EntityType.WANDERING_TRADER.create(region.getLevel(), net.minecraft.world.entity.EntitySpawnReason.STRUCTURE);
+		if (trader != null) {
+			trader.snapTo(baseX + x + 0.5, t.topSolidY[k] + 1, baseZ + z + 0.5, 0, 0);
+			trader.setPersistenceRequired();
+			region.addFreshEntity(trader);
 		}
 	}
 

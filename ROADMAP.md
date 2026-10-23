@@ -23,8 +23,9 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
    offices, warehouses, houses), with turning stairs, a door in every wall and furniture by room; place
    names on screen, street and shop signs; villagers kept round each player. Next:
    1. **Places from the map.** Done: street furniture where mapped, parks with benches, lamps, flowers and
-      fountains, market stalls, boats by harbours, minecarts at stations. Next: cemeteries, allotments with
-      crops and animals, a wandering trader at markets, cartographers' chests holding a map of their own town.
+      fountains, market stalls and a trader, boats by harbours, minecarts at stations, cemeteries,
+      allotments, flower beds, pitches, maps of your own town in bookshops. Next: animals on allotments and
+      farmyards, playground swings.
    2. **More villagers.** An iron golem at bell squares; villagers walking the streets by day rather than
       only round their homes.
    3. **Rooms and details.** Chairs at tables, chimney smoke (a campfire under a chimney on some roofs),

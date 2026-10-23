@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -283,16 +284,32 @@ final class SelfTest {
 
 			offlineAndCache(server, field);
 
-			CompletableFuture<Void> onServer = new CompletableFuture<>();
-			server.execute(() -> {
-				try {
-					inWorld(server);
-					onServer.complete(null);
-				} catch (Throwable e) {
-					onServer.completeExceptionally(e);
+			// The checks in the world, a server task each, the server running on between them.
+			List<Map.Entry<String, Runnable>> phases = server.submit(() -> inWorld(server)).join();
+			long longest = 0;
+			String longestName = "";
+			for (Map.Entry<String, Runnable> phase : phases) {
+				long started = System.nanoTime();
+				server.submit(() -> {
+					try {
+						phase.getValue().run();
+					} catch (Throwable e) {
+						RealEarth.LOGGER.error("[selftest] " + phase.getKey() + " crashed", e);
+						FAILURES.add("crash in " + phase.getKey() + ": " + e);
+					}
+				}).join();
+				long ms = (System.nanoTime() - started) / 1_000_000;
+				if (ms > 1000) {
+					log("  phase '%s' held the server %d ms", phase.getKey(), ms);
 				}
-			});
-			onServer.join();
+				if (ms > longest) {
+					longest = ms;
+					longestName = phase.getKey();
+				}
+				Thread.sleep(1500);
+			}
+			log("%d phases in the world; the longest, %s, took %d ms in one server task", phases.size(), longestName, longest);
+			soak(server);
 			if (lootrCheck != null && net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("lootr")) {
 				// Lootr converts containers with a loot table on its own tick, once their chunk and the chunks
 				// two around it are fully loaded, as they are round a player: hold them loaded, let the server
@@ -371,6 +388,78 @@ final class SelfTest {
 
 		log(FAILURES.isEmpty() ? "PASS" : "FAIL (%d): %s", FAILURES.size(), FAILURES);
 		server.execute(() -> server.halt(false));
+	}
+
+	/**
+	 * A walk across the city as a player makes one: an area of chunks held loaded, moved on step by step,
+	 * what it leaves unloading. The heap must level off (nothing kept of the chunks gone), and the server's
+	 * ticks stay short while it generates.
+	 */
+	private static void soak(MinecraftServer server) throws Exception {
+		ServerLevel earth = RealEarth.earthLevel(server);
+		TerrainField field = RealEarth.terrain();
+		int z = field.startZ() >> 4;
+		int x0 = (int) Math.floor(field.projection().blockX(59.3293, 17.98)) >> 4;
+		int radius = 4;
+		int steps = 30;
+		int stride = 6;
+		Runtime rt = Runtime.getRuntime();
+		List<String> heaps = new ArrayList<>();
+		long early = 0;
+		long late = 0;
+		long slowest = 0;
+		long sum = 0;
+		long count = 0;
+		int previous = Integer.MIN_VALUE;
+		long started = System.nanoTime();
+		for (int step = 0; step < steps; step++) {
+			int x = x0 + step * stride;
+			server.submit(() -> forceArea(earth, x, z, radius, true)).join();
+			long until = System.currentTimeMillis() + 120_000;
+			while (System.currentTimeMillis() < until && !server.submit(() -> {
+				for (int dx = -radius; dx <= radius; dx++) {
+					for (int dz = -radius; dz <= radius; dz++) {
+						if (earth.getChunkSource().getChunkNow(x + dx, z + dz) == null) {
+							return false;
+						}
+					}
+				}
+				return true;
+			}).join()) {
+				Thread.sleep(200);
+				for (long nanos : server.getTickTimesNanos()) {
+					slowest = Math.max(slowest, nanos);
+				}
+			}
+			if (previous != Integer.MIN_VALUE) {
+				int p = previous;
+				server.submit(() -> forceArea(earth, p, z, radius, false)).join();
+			}
+			previous = x;
+			for (long nanos : server.getTickTimesNanos()) {
+				if (nanos > 0) {
+					slowest = Math.max(slowest, nanos);
+					sum += nanos;
+					count++;
+				}
+			}
+			if (step % 5 == 4) {
+				Thread.sleep(2_000); // let what was left unload
+				System.gc();
+				long used = (rt.totalMemory() - rt.freeMemory()) >> 20;
+				heaps.add(used + " MB");
+				if (step == 9) {
+					early = used;
+				}
+				late = used;
+			}
+		}
+		int last = previous;
+		server.submit(() -> forceArea(earth, last, z, radius, false)).join();
+		log("soak: %d steps of %d x %d chunks across Stockholm in %d s; heap after each 5 steps %s; ticks: slowest %d ms, mean %.1f ms",
+			steps, radius * 2 + 1, radius * 2 + 1, (System.nanoTime() - started) / 1_000_000_000, heaps, slowest / 1_000_000,
+			count == 0 ? 0 : sum / (double) count / 1_000_000);
+		check(late <= early * 1.25 + 512, "the heap levels off while new land is generated (%d MB after 10 steps, %d MB after %d)", early, late, steps);
 	}
 
 	private static void forceArea(ServerLevel level, int cx, int cz, int r, boolean forced) {
@@ -948,11 +1037,16 @@ final class SelfTest {
 		}
 	}
 
-	private static void inWorld(MinecraftServer server) {
+	/**
+	 * The checks in the world, as phases: each is run as a server task of its own, with the server let
+	 * run between them, so no one tick holds everything the checks load.
+	 */
+	private static List<Map.Entry<String, Runnable>> inWorld(MinecraftServer server) {
+		List<Map.Entry<String, Runnable>> phases = new ArrayList<>();
 		ServerLevel earth = RealEarth.earthLevel(server);
 		check(earth != null, "Earth dimension is registered");
 		if (earth == null) {
-			return;
+			return phases;
 		}
 		check(earth.getMinY() == VerticalScale.MIN_Y && earth.getMaxY() == VerticalScale.MAX_Y,
 			"Earth spans Y %d to %d", earth.getMinY(), earth.getMaxY());
@@ -960,1232 +1054,1328 @@ final class SelfTest {
 		// Everything below happens around the start point, which is where players are.
 		int startCx = RealEarth.terrain().startX() >> 4;
 		int startCz = RealEarth.terrain().startZ() >> 4;
-		long t0 = System.nanoTime();
-		int generated = 0;
-		for (int cx = -2; cx <= 2; cx++) {
-			for (int cz = -2; cz <= 2; cz++) {
-				earth.getChunk(startCx + cx, startCz + cz);
-				generated++;
+		phases.add(Map.entry("chunks round the start", () -> {
+			long t0 = System.nanoTime();
+			int generated = 0;
+			for (int cx = -2; cx <= 2; cx++) {
+				for (int cz = -2; cz <= 2; cz++) {
+					earth.getChunk(startCx + cx, startCz + cz);
+					generated++;
+				}
 			}
-		}
-		log("generated %d full chunks around the start in %d ms", generated, (System.nanoTime() - t0) / 1_000_000);
+			log("generated %d full chunks around the start in %d ms", generated, (System.nanoTime() - t0) / 1_000_000);
+		}));
 
-		// Throughput in a city: Gothenburg, fresh, with its data downloaded first; then a breakdown.
-		{
-			TerrainField field = RealEarth.terrain();
-			int bx = (int) field.projection().blockX(57.7060, 11.9680) >> 4;
-			int bz = (int) field.projection().blockZ(57.7060) >> 4;
-			List<CompletableFuture<ChunkTerrain>> warm = new ArrayList<>();
-			for (int dx = -1; dx <= 11; dx++) {
-				for (int dz = -1; dz <= 11; dz++) {
-					warm.add(field.chunk(bx + dx, bz + dz));
-				}
-			}
-			CompletableFuture.allOf(warm.toArray(CompletableFuture[]::new)).join();
-			Perf.reset();
-			long tc0 = System.nanoTime();
-			for (int dx = 0; dx < 10; dx++) {
-				for (int dz = 0; dz < 10; dz++) {
-					earth.getChunk(bx + dx, bz + dz);
-				}
-			}
-			long tc1 = System.nanoTime();
-			int sections = 0;
-			int blockEntities = 0;
-			for (int dx = 0; dx < 10; dx++) {
-				for (int dz = 0; dz < 10; dz++) {
-					blockEntities += earth.getChunk(bx + dx, bz + dz).getBlockEntities().size();
-					for (var section : earth.getChunk(bx + dx, bz + dz).getSections()) {
-						if (!section.hasOnlyAir()) {
-							sections++;
-						}
-					}
-				}
-			}
-			log("perf city: 100 full chunks of central Gothenburg (terrain fetched before) in %d ms; %d non-empty sections, %d block entities; %s",
-				(tc1 - tc0) / 1_000_000, sections, blockEntities, Perf.report());
-			long villagers = Perf.total("villagers");
-			check(villagers >= 2 && villagers <= 15, "a city gets a few villagers, not a crowd: %d in 100 chunks", villagers);
-			check(blockEntities < 100 * 12, "a city's rooms keep block entities few: %d in 100 chunks", blockEntities);
-		}
-
-		// Throughput at a fresh place: terrain alone, then full chunks.
-		{
-			TerrainField field = RealEarth.terrain();
-			int bx = (int) field.projection().blockX(62.10, 7.13) >> 4;
-			int bz = (int) field.projection().blockZ(62.10) >> 4;
-			field.chunk(bx, bz).join();
-			Perf.reset();
-			long ta = System.nanoTime();
-			List<CompletableFuture<ChunkTerrain>> all = new ArrayList<>();
-			for (int dx = 0; dx < 10; dx++) {
-				for (int dz = 0; dz < 10; dz++) {
-					all.add(field.chunk(bx + dx, bz + dz));
-				}
-			}
-			CompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();
-			long tb = System.nanoTime();
-			for (int dx = 0; dx < 10; dx++) {
-				for (int dz = 0; dz < 10; dz++) {
-					earth.getChunk(bx + dx, bz + dz);
-				}
-			}
-			long tc = System.nanoTime();
-			log("perf country breakdown: %s", Perf.report());
-			log("perf: 100 chunk terrains in %d ms; 100 full chunks (sequential, server thread) in %d ms",
-				(tb - ta) / 1_000_000, (tc - tb) / 1_000_000);
-		}
-
-		// Underground: caves, ravines, and vanilla's ores at vanilla depths below the real ground.
-		{
-			int columns = 0;
-			int air = 0;
-			int lava = 0;
-			java.util.Map<String, int[]> ores = new java.util.TreeMap<>();
-			BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
-			for (int cx = -3; cx <= 3; cx++) {
-				for (int cz = -3; cz <= 3; cz++) {
-					LevelChunk c = earth.getChunk(startCx + cx, startCz + cz);
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							int top = c.getHeight(Heightmap.Types.OCEAN_FLOOR, x, z);
-							columns++;
-							for (int depth = 1; depth <= 140; depth++) {
-								BlockState s = c.getBlockState(p.set(x, top - depth, z));
-								if (s.isAir()) {
-									air++;
-								} else if (s.is(Blocks.LAVA)) {
-									lava++;
-								} else if (s.is(net.minecraft.tags.BlockTags.COAL_ORES) || s.is(net.minecraft.tags.BlockTags.IRON_ORES)
-									|| s.is(net.minecraft.tags.BlockTags.DIAMOND_ORES) || s.is(net.minecraft.tags.BlockTags.GOLD_ORES)
-									|| s.is(net.minecraft.tags.BlockTags.REDSTONE_ORES) || s.is(net.minecraft.tags.BlockTags.COPPER_ORES)) {
-									String name = s.getBlock().getDescriptionId().replace("block.minecraft.", "").replace("deepslate_", "");
-									int[] stat = ores.computeIfAbsent(name, n -> new int[2]);
-									stat[0]++;
-									stat[1] += depth;
-								}
-							}
-						}
-					}
-				}
-			}
-			double caveShare = 100.0 * air / (columns * 140.0);
-			log("underground of %d columns, 1-140 m down: %.1f%% cave, %d lava", columns, caveShare, lava);
-			ores.forEach((name, stat) -> log("  %-14s %5d blocks, mean depth %3d m", name, stat[0], stat[1] / stat[0]));
-			check(caveShare > 1.0 && caveShare < 25.0, "caves exist underground (%.1f%% of the band)", caveShare);
-			check(ores.containsKey("coal_ore") && ores.containsKey("iron_ore"), "vanilla coal and iron generate");
-			int[] diamonds = ores.get("diamond_ore");
-			check(diamonds != null && diamonds[1] / diamonds[0] > 90, "diamonds generate deep: %s", diamonds == null ? "none" : diamonds[1] / diamonds[0] + " m mean depth");
-			int[] coal = ores.get("coal_ore");
-			check(coal != null && coal[1] / coal[0] < 70, "coal sits shallow: %s", coal == null ? "none" : coal[1] / coal[0] + " m mean depth");
-		}
-
-		// Structures: starts around the origin and out in the Atlantic, and where they sit against the ground.
-		{
-			var structures = earth.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
-			TerrainField field = RealEarth.terrain();
-			int atlanticX = (int) field.projection().blockX(45.0, -30.0) >> 4;
-			int atlanticZ = (int) field.projection().blockZ(45.0) >> 4;
-			for (int[] region : new int[][] {{startCx, startCz}, {atlanticX, atlanticZ}}) {
-				java.util.Map<String, Integer> counts = new java.util.TreeMap<>();
-				long ts = System.nanoTime();
-				for (int cx = region[0] - 32; cx < region[0] + 32; cx++) {
-					for (int cz = region[1] - 32; cz < region[1] + 32; cz++) {
-						var c = earth.getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.STRUCTURE_STARTS, true);
-						for (var e : c.getAllStarts().entrySet()) {
-							if (!e.getValue().isValid()) {
-								continue;
-							}
-							String name = structures.getKey(e.getKey()).getPath();
-							counts.merge(name, 1, Integer::sum);
-							var box = e.getValue().getBoundingBox();
-							ChunkTerrain t;
-							try {
-								t = field.chunkBlocking(cx, cz, 60);
-							} catch (Exception ex) {
-								continue;
-							}
-							int k = ChunkTerrain.index(8, 8);
-							int ground = t.topSolidY[k];
-							int water = t.waterTopY[k];
-							if (counts.get(name) <= 2) {
-								log("  %-18s chunk %6d,%6d  Y %d..%d, ground at Y %d", name, cx, cz, box.minY(), box.maxY(), ground);
-							}
-							if (name.startsWith("ancient_city") || name.startsWith("trial_chambers")) {
-								check(box.maxY() < ground + 10, "%s is under the ground (top Y %d, ground Y %d)", name, box.maxY(), ground);
-							}
-							if (name.equals("monument")) {
-								check(box.minY() < VerticalScale.SEA_LEVEL_Y && box.maxY() <= Math.max(water, ground) + 2,
-									"monument sits under the sea (Y %d..%d, sea surface Y %d)", box.minY(), box.maxY(), water);
-							}
-							if (name.equals("mineshaft") || name.equals("stronghold")) {
-								check(box.minY() >= VerticalScale.SEA_LEVEL_Y - 140, "%s within vanilla depth of sea level (Y %d)", name, box.minY());
-							}
-						}
-					}
-				}
-				log("structure starts in 64 x 64 chunks at %d,%d (%d ms, world seed %d): %s", region[0], region[1], (System.nanoTime() - ts) / 1_000_000,
-					earth.getSeed(), counts);
-				check(!counts.isEmpty(), "structures generate");
-				int villages = counts.entrySet().stream().filter(e -> e.getKey().startsWith("village")).mapToInt(java.util.Map.Entry::getValue).sum();
-				if (region[0] == startCx) {
-					// 64 x 64 chunks of central Stockholm is about 1 km square of city.
-					// Central Stockholm's buildings are all mapped, so they are built instead of villages.
-					check(villages <= 3, "real buildings replace villages in the city: %d villages in 1 km square", villages);
-					check(!counts.containsKey("pillager_outpost"), "no pillager outposts in the city");
-				} else {
-					check(villages == 0, "no villages out at sea");
-				}
-			}
-		}
-
-		// Roads and railways: central Stockholm, about 600 m square around the start.
-		{
-			TerrainField field = RealEarth.terrain();
-			int paved = 0;
-			int paths = 0;
-			int track = 0;
-			int decks = 0;
-			int bestRails = 0;
-			int bestCx = 0;
-			int bestCz = 0;
-			for (int cx = startCx - 20; cx <= startCx + 20; cx++) {
-				for (int cz = startCz - 20; cz <= startCz + 20; cz++) {
-					ChunkTerrain c;
-					try {
-						c = field.chunkBlocking(cx, cz, 120);
-					} catch (Exception e) {
-						continue;
-					}
-					int rails = 0;
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							int k = ChunkTerrain.index(x, z);
-							byte w = c.way[k];
-							if (se.itssimple.realearth.osm.Ways.isPaved(w)) {
-								paved++;
-							} else if (w == se.itssimple.realearth.osm.Ways.PATH) {
-								paths++;
-							} else if (w == se.itssimple.realearth.osm.Ways.RAIL) {
-								rails++;
-							}
-							if (c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE) {
-								decks++;
-							}
-						}
-					}
-					track += rails;
-					if (rails > bestRails) {
-						bestRails = rails;
-						bestCx = cx;
-						bestCz = cz;
-					}
-				}
-			}
-			log("ways in 41 x 41 chunks of central Stockholm: %d paved, %d path, %d rail, %d bridge deck columns", paved, paths, track, decks);
-			check(paved > 20_000 && paths > 2_000, "streets and paths are drawn in the city");
-			check(decks > 100, "bridges carry ways over the water");
-			// A surface railway from the map itself: the longest non-bridge line in the tile north of the city.
+		phases.add(Map.entry("Throughput in a city", () -> {
+			// Throughput in a city: Gothenburg, fresh, with its data downloaded first; then a breakdown.
 			{
-				int mx = (int) Math.floor(Mercator.sampleX(18.0278) / (Mercator.TILE_SIZE * 2));
-				int my = (int) Math.floor(Mercator.sampleY(59.3497) / (Mercator.TILE_SIZE * 2));
-				double[] longest = null;
-				for (var w : field.map().tile(mx, my).join().ways()) {
-					if (w.kind() == se.itssimple.realearth.osm.Ways.RAIL && !w.bridge() && (longest == null || w.points().length > longest.length)) {
-						longest = w.points();
+				TerrainField field = RealEarth.terrain();
+				int bx = (int) field.projection().blockX(57.7060, 11.9680) >> 4;
+				int bz = (int) field.projection().blockZ(57.7060) >> 4;
+				List<CompletableFuture<ChunkTerrain>> warm = new ArrayList<>();
+				for (int dx = -1; dx <= 11; dx++) {
+					for (int dz = -1; dz <= 11; dz++) {
+						warm.add(field.chunk(bx + dx, bz + dz));
 					}
 				}
-				if (longest != null) {
-					int mid = (longest.length / 4) * 2;
-					double rLat = Mercator.latitudeOfSampleY(longest[mid + 1]);
-					double rLon = (longest[mid] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
-					int tCx = (int) field.projection().blockX(rLat, rLon) >> 4;
-					int tCz = (int) field.projection().blockZ(rLat) >> 4;
-					for (int cx = tCx - 3; cx <= tCx + 3; cx++) {
-						for (int cz = tCz - 3; cz <= tCz + 3; cz++) {
-							ChunkTerrain c;
-							try {
-								c = field.chunkBlocking(cx, cz, 120);
-							} catch (Exception e) {
-								continue;
-							}
-							int rails = 0;
-							for (int x = 0; x < 16; x++) {
-								for (int z = 0; z < 16; z++) {
-									if (c.way[ChunkTerrain.index(x, z)] == se.itssimple.realearth.osm.Ways.RAIL) {
-										rails++;
-									}
-								}
-							}
-							track += rails;
-							if (rails > bestRails) {
-								bestRails = rails;
-								bestCx = cx;
-								bestCz = cz;
-							}
-						}
+				CompletableFuture.allOf(warm.toArray(CompletableFuture[]::new)).join();
+				Perf.reset();
+				long tc0 = System.nanoTime();
+				for (int dx = 0; dx < 10; dx++) {
+					for (int dz = 0; dz < 10; dz++) {
+						earth.getChunk(bx + dx, bz + dz);
 					}
-					log("railway at %.5f, %.5f: %d track columns nearby; most in chunk %d,%d (%d)", rLat, rLon, track, bestCx, bestCz, bestRails);
 				}
-			}
-			check(track > 40, "railways are drawn");
-			if (bestRails > 0) {
-				LevelChunk c = earth.getChunk(bestCx, bestCz);
-				ChunkTerrain terrain = RealEarth.terrain().chunkIfReady(bestCx, bestCz);
-				int placed = 0;
-				int joined = 0;
-				for (int x = 0; x < 16; x++) {
-					for (int z = 0; z < 16; z++) {
-						if (terrain != null && terrain.way[ChunkTerrain.index(x, z)] == se.itssimple.realearth.osm.Ways.RAIL) {
-							BlockState rail = c.getBlockState(new BlockPos(x, terrain.topSolidY[ChunkTerrain.index(x, z)] + 1, z));
-							if (placed == 0 && !rail.is(Blocks.RAIL)) {
-								int ty = terrain.topSolidY[ChunkTerrain.index(x, z)];
-								log("track column %d,%d top Y %d: %s / %s / %s; heightmap %d", x, z, ty, c.getBlockState(new BlockPos(x, ty - 1, z)),
-									c.getBlockState(new BlockPos(x, ty, z)), rail, c.getHeight(Heightmap.Types.WORLD_SURFACE, x, z));
-							}
-							if (rail.is(Blocks.RAIL)) {
-								placed++;
-								var shape = rail.getValue(net.minecraft.world.level.block.RailBlock.SHAPE);
-								if (shape != net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH || terrain.way[ChunkTerrain.index(x, z - 1)] == se.itssimple.realearth.osm.Ways.RAIL
-									|| terrain.way[ChunkTerrain.index(x, z + 1)] == se.itssimple.realearth.osm.Ways.RAIL) {
-									joined++;
-								}
+				long tc1 = System.nanoTime();
+				int sections = 0;
+				int blockEntities = 0;
+				for (int dx = 0; dx < 10; dx++) {
+					for (int dz = 0; dz < 10; dz++) {
+						blockEntities += earth.getChunk(bx + dx, bz + dz).getBlockEntities().size();
+						for (var section : earth.getChunk(bx + dx, bz + dz).getSections()) {
+							if (!section.hasOnlyAir()) {
+								sections++;
 							}
 						}
 					}
 				}
-				check(placed >= bestRails * 7 / 10 && joined >= placed * 9 / 10,
-					"rails are laid along the track: %d of %d track columns, %d joined to a neighbour", placed, bestRails, joined);
+				log("perf city: 100 full chunks of central Gothenburg (terrain fetched before) in %d ms; %d non-empty sections, %d block entities; %s",
+					(tc1 - tc0) / 1_000_000, sections, blockEntities, Perf.report());
+				long villagers = Perf.total("villagers");
+				check(villagers >= 2 && villagers <= 15, "a city gets a few villagers, not a crowd: %d in 100 chunks", villagers);
+				check(blockEntities < 100 * 12, "a city's rooms keep block entities few: %d in 100 chunks", blockEntities);
 			}
-		}
+		}));
 
-		// Västerbron, the long road bridge over Riddarfjärden: every chunk along it, decks over the water.
-		{
-			TerrainField field = RealEarth.terrain();
-			int mx = (int) Math.floor(Mercator.sampleX(18.0262) / (Mercator.TILE_SIZE * 2));
-			int my = (int) Math.floor(Mercator.sampleY(59.3228) / (Mercator.TILE_SIZE * 2));
-			double[] longest = null;
-			for (var w : field.map().tile(mx, my).join().ways()) {
-				if (w.bridge() && se.itssimple.realearth.osm.Ways.isPaved(w.kind()) && (longest == null || length(w.points()) > length(longest))) {
-					longest = w.points();
-				}
-			}
-			java.util.Set<Long> along = new java.util.LinkedHashSet<>();
-			if (longest != null) {
-				for (int i = 0; i + 1 < longest.length; i += 2) {
-					double rLat = Mercator.latitudeOfSampleY(longest[i + 1]);
-					double rLon = (longest[i] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
-					along.add(ChunkPos.pack((int) field.projection().blockX(rLat, rLon) >> 4, (int) field.projection().blockZ(rLat) >> 4));
-				}
-			}
-			int decks = 0;
-			int placed = 0;
-			int overWater = 0;
-			for (long key : along) {
-				try {
-					ChunkTerrain c = field.chunkBlocking(ChunkPos.getX(key), ChunkPos.getZ(key), 120);
-					LevelChunk chunk = earth.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key));
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							int k = ChunkTerrain.index(x, z);
-							if (c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE) {
-								decks++;
-								if (c.waterTopY[k] != Integer.MIN_VALUE) {
-									overWater++;
-								}
-								BlockState at = chunk.getBlockState(new BlockPos(x, c.deckY[k], z));
-								if (!at.isAir() && at.getFluidState().isEmpty()) {
-									placed++;
-								} else if (decks - placed == 1) {
-									log("deck column %d,%d: deck Y %d (%.1f m), water top %d, ground top %d, block there %s", x, z, c.deckY[k], c.deckMeters[k],
-										c.waterTopY[k], c.topSolidY[k], at);
-								}
-							}
-						}
-					}
-				} catch (Exception e) {
-					log("bridge chunk failed: %s", e);
-				}
-			}
-			log("Västerbron: %d chunks along it, %d deck columns (%d over water), %d with a deck block", along.size(), decks, overWater, placed);
-			check(overWater > 50 && placed >= decks * 9 / 10, "Västerbron's deck stands over the water (%d of %d columns)", placed, decks);
-
-			// Every paved bridge in the map tiles of Västerbron, the city centre and Slussen can be walked
-			// onto and along: down its centreline, from a few blocks before it to a few after, the surface
-			// never steps more than a block.
-			int bridges = 0;
-			int columns = 0;
-			int steps = 0;
-			java.util.Set<Long> walkedTiles = new java.util.LinkedHashSet<>();
-			for (double[] at : new double[][] {{59.3228, 18.0262}, {59.3293, 18.0686}, {59.3195, 18.0717}}) {
-				walkedTiles.add(ChunkPos.pack((int) Math.floor(Mercator.sampleX(at[1]) / (Mercator.TILE_SIZE * 2)),
-					(int) Math.floor(Mercator.sampleY(at[0]) / (Mercator.TILE_SIZE * 2))));
-			}
-			for (long tile : walkedTiles) {
-				for (var w : field.map().tile(ChunkPos.getX(tile), ChunkPos.getZ(tile)).join().ways()) {
-					if (!w.bridge() || !se.itssimple.realearth.osm.Ways.isPaved(w.kind())) {
-						continue;
-					}
-					bridges++;
-					int[] walked = walkSteps(field, w.points(), 8);
-					columns += walked[0];
-					steps += walked[1];
-					if (walked[1] > 0 && walked[2] != Integer.MIN_VALUE) {
-						log("bridge step: %d blocks at block %d,%d", walked[3], walked[2], walked[4]);
-					}
-				}
-			}
-			log("bridges in %d map tiles of Stockholm: %d, %d columns along them, %d steps of more than a block", walkedTiles.size(), bridges, columns, steps);
-			check(bridges > 10 && steps * 1000 <= columns, "bridges are walkable: %d steps over %d columns", steps, columns);
-		}
-
-		// Place names: which town and district a position is in, from the map.
-		{
-			TerrainField field = RealEarth.terrain();
-			String[][] expect = {{"59.3150", "18.0720", "Stockholm", "Södermalm"}, {"59.3250", "18.0710", "Stockholm", "Gamla stan"},
-				{"67.5000", "20.3000", null, null}};
-			for (String[] e : expect) {
-				double lat = Double.parseDouble(e[0]);
-				double lon = Double.parseDouble(e[1]);
-				double bx = field.projection().blockX(lat, lon);
-				double bz = field.projection().blockZ(lat);
-				se.itssimple.realearth.world.Places.Here here = null;
-				for (int i = 0; i < 300 && here == null; i++) {
-					here = se.itssimple.realearth.world.Places.at(field, bx, bz);
-					if (here == null) {
-						try {
-							Thread.sleep(200);
-						} catch (InterruptedException ex) {
-							Thread.currentThread().interrupt();
-						}
-					}
-				}
-				var got = here;
-				log("place at %s, %s: %s", e[0], e[1], got);
-				check(got != null && java.util.Objects.equals(got.town(), e[2]) && java.util.Objects.equals(got.district(), e[3]),
-					"%s, %s is in %s, %s", e[0], e[1], e[3], e[2]);
-				check(got != null && got.capital() == (e[2] != null), "%s, %s is %sa capital", e[0], e[1], e[2] != null ? "" : "not ");
-			}
-		}
-
-		// Advancements for real places: all load, under one root.
-		{
-			int found = 0;
-			for (String name : new String[] {"root", "town", "capital", "equator", "polar_circle", "prime_meridian", "date_line", "thin_air", "below_the_sea"}) {
-				if (server.getAdvancements().get(RealEarth.id(name)) != null) {
-					found++;
-				}
-			}
-			check(found == 9, "the Real Earth advancements load (%d of 9)", found);
-		}
-
-		// Spawning on land: a start point out on Saltsjön moves to the shore.
-		{
-			TerrainField field = RealEarth.terrain();
-			int x = (int) field.projection().blockX(59.3205, 18.1100);
-			int z = (int) field.projection().blockZ(59.3205);
-			int[] land = field.landNear(x, z);
-			ChunkTerrain t = field.chunkIfReady(land[0] >> 4, land[1] >> 4);
-			boolean dry = t != null && t.waterTopY[ChunkTerrain.index(land[0] & 15, land[1] & 15)] == Integer.MIN_VALUE;
-			double km = Math.hypot(land[0] - x, land[1] - z) / field.projection().blocksPerMeter(59.32) / 1000;
-			log("spawn from Saltsjön: land at %d,%d, %.2f km away, %s", land[0], land[1], km, dry ? "dry" : "in water");
-			check(dry && km > 0.05 && km < 3, "a start point in the sea moves to the nearest land (%.2f km)", km);
-		}
-
-		// Fish in lakes above the sea: Siljan, 161 m up.
-		{
-			TerrainField field = RealEarth.terrain();
-			int x = (int) field.projection().blockX(60.88, 14.75);
-			int z = (int) field.projection().blockZ(60.88);
-			var chunk = earth.getChunk(x >> 4, z >> 4);
-			int top = chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, x & 15, z & 15);
-			BlockPos pos = new BlockPos(x, top - 2, z);
-			boolean water = earth.getFluidState(pos).is(net.minecraft.tags.FluidTags.WATER) && earth.getFluidState(pos.above(2)).is(net.minecraft.tags.FluidTags.WATER);
-			int ok = 0;
-			for (long seed = 0; seed < 20; seed++) {
-				ok += net.minecraft.world.entity.animal.fish.WaterAnimal.checkSurfaceWaterAnimalSpawnRules(net.minecraft.world.entity.EntityType.COD, earth,
-					net.minecraft.world.entity.EntitySpawnReason.NATURAL, pos, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
-			}
-			log("fish in Siljan: water surface at Y %d (%s), the spawn rule allows %d of 20", top - 1, water ? "deep enough" : "not water", ok);
-			check(water && ok == 20, "fish may spawn in lakes above the sea (%d of 20)", ok);
-		}
-
-		// Railways you can ride: every rail joins the next, on the ground, over bridges and through tunnels.
-		{
-			TerrainField field = RealEarth.terrain();
-			int rails = 0;
-			int broken = 0;
-			int powered = 0;
-			int unpowered = 0;
-			int gaps = 0;
-			int mismatched = 0;
-			int tunnels = 0;
-			int lanterns = 0;
-			// Karlberg's yards; the main line by Marsta; the Arlanda line going under ground; Gothenburg's rail
-			// tunnels; Soderledstunneln, a road under Sodermalm.
-			for (double[] place : new double[][] {{59.3458, 18.0182}, {59.6200, 17.8600}, {59.6141, 17.8612}, {57.7150, 11.9904}, {59.3140, 18.0700}}) {
-				int cx = (int) Math.floor(field.projection().blockX(place[0], place[1])) >> 4;
-				int cz = (int) Math.floor(field.projection().blockZ(place[0])) >> 4;
-				int[] r = rideRails(earth, field, cx, cz, 4);
-				log("rails at %.4f, %.4f: %d rails, %d broken ends (%d on a gap, %d not joining), %d track ends, %d powered (%d without power); "
-					+ "%d tunnel columns, %d lanterns", place[0], place[1], r[0], r[1], r[4], r[5], r[8], r[2], r[3], r[6], r[7]);
-				tunnels += r[6];
-				lanterns += r[7];
-				rails += r[0];
-				broken += r[1];
-				powered += r[2];
-				unpowered += r[3];
-				gaps += r[4];
-				mismatched += r[5];
-			}
-			check(rails > 100 && broken * 200 <= rails, "rails join up end to end (%d broken ends over %d rails)", broken, rails);
-			check(powered * 20 >= rails && unpowered == 0, "railways are powered (%d powered rails, %d without power, over %d rails)", powered, unpowered, rails);
-			check(tunnels > 50 && lanterns > 0, "railway tunnels are dug out and lit (%d tunnel columns, %d lanterns)", tunnels, lanterns);
-		}
-
-		// Slimes: in slime chunks only well below the sea, as in vanilla; not on the surface.
-		{
-			TerrainField field = RealEarth.terrain();
-			int startX = (int) field.projection().blockX(59.3293, 18.0686) >> 4;
-			int startZ = (int) field.projection().blockZ(59.3293) >> 4;
-			int surface = 0;
-			int deep = 0;
-			int chunks = 0;
-			for (int cx = startX - 8; cx <= startX + 8 && chunks < 3; cx++) {
-				for (int cz = startZ - 8; cz <= startZ + 8 && chunks < 3; cz++) {
-					if (net.minecraft.world.level.levelgen.WorldgenRandom.seedSlimeChunk(cx, cz, earth.getSeed(), 987234911L).nextInt(10) != 0) {
-						continue;
-					}
-					chunks++;
-					var chunk = earth.getChunk(cx, cz);
-					int x = cx * 16 + 8;
-					int z = cz * 16 + 8;
-					BlockPos top = new BlockPos(x, chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, 8, 8) + 1, z);
-					BlockPos low = new BlockPos(x, VerticalScale.SEA_LEVEL_Y - 60, z);
-					for (long seed = 0; seed < 200; seed++) {
-						surface += net.minecraft.world.entity.monster.Slime.checkSlimeSpawnRules(net.minecraft.world.entity.EntityType.SLIME, earth,
-							net.minecraft.world.entity.EntitySpawnReason.NATURAL, top, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
-						deep += net.minecraft.world.entity.monster.Slime.checkSlimeSpawnRules(net.minecraft.world.entity.EntityType.SLIME, earth,
-							net.minecraft.world.entity.EntitySpawnReason.NATURAL, low, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
-					}
-				}
-			}
-			log("slime spawn rule in %d slime chunks, 200 tries each: %d on the surface, %d 60 blocks under the sea", chunks, surface, deep);
-			check(chunks > 0 && surface == 0 && deep > 0, "slimes spawn deep in slime chunks, not on the surface (%d surface, %d deep)", surface, deep);
-		}
-
-		// Buildings: central Stockholm, as planned and as built.
-		{
-			TerrainField field = RealEarth.terrain();
-			int columns = 0;
-			int maxFloors = 0;
-			int minStorey = Integer.MAX_VALUE;
-			int bestCx = 0;
-			int bestCz = 0;
-			int bestColumns = 0;
-			java.util.Set<Long> ids = new java.util.HashSet<>();
-			for (int cx = startCx - 6; cx <= startCx + 6; cx++) {
-				for (int cz = startCz - 6; cz <= startCz + 6; cz++) {
-					ChunkTerrain c;
-					try {
-						c = field.chunkBlocking(cx, cz, 120);
-					} catch (Exception e) {
-						continue;
-					}
-					int here = 0;
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							if (c.building[ChunkTerrain.index(x, z)] != 0) {
-								here++;
-							}
-						}
-					}
-					for (var plan : c.plans) {
-						ids.add(plan.id);
-						maxFloors = Math.max(maxFloors, plan.floors);
-						minStorey = Math.min(minStorey, plan.storey);
-					}
-					columns += here;
-					if (here > bestColumns) {
-						bestColumns = here;
-						bestCx = cx;
-						bestCz = cz;
-					}
-				}
-			}
-			log("buildings in 13 x 13 chunks of central Stockholm: %d buildings over %d columns; up to %d floors, storeys at least %d blocks",
-				ids.size(), columns, maxFloors, minStorey);
-			check(ids.size() > 20 && columns > 10_000, "the city's real buildings are planned");
-			check(maxFloors <= RealEarth.config().maxFloors && maxFloors >= 4 && minStorey >= 5, "floors are 5+ blocks, at most %d of them", RealEarth.config().maxFloors);
-
-			java.util.Map<String, Integer> blocks = new java.util.TreeMap<>();
-			for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
-				for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
-					LevelChunk c = earth.getChunk(cx, cz);
-					ChunkTerrain t = field.chunkIfReady(cx, cz);
-					if (t == null) {
-						continue;
-					}
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							int k = ChunkTerrain.index(x, z);
-							if (t.building[k] == 0) {
-								continue;
-							}
-							var plan = t.plans.get(t.building[k] - 1);
-							for (int y = plan.floorY; y <= t.roofY[k] + 1; y++) {
-								String name = c.getBlockState(new BlockPos(x, y, z)).getBlock().getDescriptionId().replace("block.minecraft.", "");
-								blocks.merge(name, 1, Integer::sum);
-							}
-						}
-					}
-				}
-			}
-			log("blocks in 3 x 3 chunks of buildings: %s", blocks);
-			// Beds over the whole centre: the 3 x 3 chunks can be all offices.
-			int beds = 0;
-			int mostBeds = 0;
-			for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-				for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
-					earth.getChunk(cx, cz);
-					ChunkTerrain t = field.chunkIfReady(cx, cz);
-					beds += t == null ? 0 : t.beds.size();
-					if (t != null && t.beds.size() > mostBeds) {
-						mostBeds = t.beds.size();
-						homesAt = new int[] {cx, cz};
-					}
-				}
-			}
-			int doors = blocks.entrySet().stream().filter(e -> e.getKey().endsWith("_door")).mapToInt(java.util.Map.Entry::getValue).sum();
-			check(blocks.getOrDefault("glass_pane", 0) > 100 && blocks.getOrDefault("lantern", 0) > 5 && blocks.getOrDefault("air", 0) > 1000,
-				"buildings have windows, lanterns and rooms");
-			check(beds >= 5 && doors >= 6, "buildings have beds (%d) and door blocks (%d)", beds, doors);
-			// Chests and storeroom barrels carry a loot table (so Lootr converts them); job barrels and
-			// chiseled bookshelves don't, but the shelves hold books.
-			int looted = 0;
-			int containers = 0;
-			int books = 0;
-			for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
-				for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
-					for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
-						if (be instanceof net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity r) {
-							containers++;
-							if (r.getLootTable() != null) {
-								looted++;
-							}
-						} else if (be instanceof net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity shelf) {
-							books += shelf.getItems().stream().filter(s -> !s.isEmpty()).count();
-						}
-					}
-				}
-			}
-			log("containers in 3 x 3 chunks of buildings: %d, %d with a loot table; %d books on chiseled shelves", containers, looted, books);
-			check(looted >= 3 && looted * 2 >= containers, "chests and storeroom barrels have loot tables (%d of %d)", looted, containers);
-			lootrCheck = new int[] {bestCx, bestCz, looted};
-			var storeroom = server.reloadableRegistries().getLootTable(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.LOOT_TABLE,
-				net.minecraft.resources.Identifier.fromNamespaceAndPath("realearth", "chests/storeroom")));
-			check(storeroom != net.minecraft.world.level.storage.loot.LootTable.EMPTY, "the storeroom loot table loads");
-
-			// What the buildings of the city centre are used for, from the map's shops and land use.
+		phases.add(Map.entry("Throughput at a fresh place", () -> {
+			// Throughput at a fresh place: terrain alone, then full chunks.
 			{
-				java.util.Map<String, Integer> uses = new java.util.TreeMap<>();
-				java.util.Map<String, Integer> trades = new java.util.TreeMap<>();
-				java.util.Map<String, Integer> kinds = new java.util.TreeMap<>();
-				java.util.Set<Long> seen = new java.util.HashSet<>();
-				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						if (c == null) {
-							continue;
-						}
-						for (var plan : c.plans) {
-							if (!seen.add(plan.id)) {
-								continue;
-							}
-							uses.merge(plan.use + (plan.hall != null ? "/" + plan.hall : ""), 1, Integer::sum);
-							if (plan.floors > 1 && plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.WAREHOUSE) {
-								uses.merge(plan.interior().stairs.isEmpty() ? "storeys by ladder" : "storeys by stairs", 1, Integer::sum);
-								if (plan.interior().stairs.isEmpty()) {
-									log("ladder building %d (%s, %d floors of %d): ground floor\n%s", plan.id, plan.use, plan.floors, plan.storey, plan.interior().sketch(0));
-								}
-							}
-							plan.shops.forEach(s -> trades.merge(s.trade().name(), 1, Integer::sum));
-							plan.interior().rooms.forEach(r -> kinds.merge(r.kind.name(), 1, Integer::sum));
-						}
+				TerrainField field = RealEarth.terrain();
+				int bx = (int) field.projection().blockX(62.10, 7.13) >> 4;
+				int bz = (int) field.projection().blockZ(62.10) >> 4;
+				field.chunk(bx, bz).join();
+				Perf.reset();
+				long ta = System.nanoTime();
+				List<CompletableFuture<ChunkTerrain>> all = new ArrayList<>();
+				for (int dx = 0; dx < 10; dx++) {
+					for (int dz = 0; dz < 10; dz++) {
+						all.add(field.chunk(bx + dx, bz + dz));
 					}
 				}
-				log("building uses in 13 x 13 chunks of Stockholm: %s; shops %s; rooms %s", uses, trades, kinds);
-				check(uses.getOrDefault("FLATS", 0) + uses.getOrDefault("OFFICES", 0) > 10 && !trades.isEmpty() && kinds.getOrDefault("BED", 0) > 20,
-					"buildings are flats, offices and shops, divided into rooms");
+				CompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();
+				long tb = System.nanoTime();
+				for (int dx = 0; dx < 10; dx++) {
+					for (int dz = 0; dz < 10; dz++) {
+						earth.getChunk(bx + dx, bz + dz);
+					}
+				}
+				long tc = System.nanoTime();
+				log("perf country breakdown: %s", Perf.report());
+				log("perf: 100 chunk terrains in %d ms; 100 full chunks (sequential, server thread) in %d ms",
+					(tb - ta) / 1_000_000, (tc - tb) / 1_000_000);
 			}
+		}));
 
-			// Buildings as the map colours them, and towers on their roofs.
+		phases.add(Map.entry("Underground", () -> {
+			// Underground: caves, ravines, and vanilla's ores at vanilla depths below the real ground.
 			{
-				int coloured = 0;
-				int matched = 0;
-				int towers = 0;
-				int standing = 0;
-				java.util.Map<String, Integer> walls = new java.util.TreeMap<>();
-				java.util.Set<Long> seen = new java.util.HashSet<>();
-				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						if (c == null) {
-							continue;
-						}
-						LevelChunk chunk = earth.getChunk(cx, cz);
-						for (int x = 0; x < 16; x++) {
-							for (int z = 0; z < 16; z++) {
-								int k = ChunkTerrain.index(x, z);
-								if (c.building[k] == 0) {
-									continue;
-								}
-								var plan = c.plans.get(c.building[k] - 1);
-								int wx = cx * 16 + x;
-								int wz = cz * 16 + z;
-								var tower = plan.towerAt(wx, wz);
-								if (tower != null && seen.add(plan.id * 31 + tower.topY())) {
-									towers++;
-									if (!chunk.getBlockState(new BlockPos(x, tower.topY() - tower.capRise(), z)).isAir()) {
-										standing++;
-									}
-								}
-								net.minecraft.world.level.block.Block wall = se.itssimple.realearth.world.Facades.wall(plan.colour);
-								if (wall == null || !seen.add(plan.id)) {
-									continue;
-								}
-								coloured++;
-								walls.merge(wall.getDescriptionId().replace("block.minecraft.", ""), 1, Integer::sum);
-								// Its wall block somewhere in its outer wall, a storey up.
-								boolean found = false;
-								for (int i = 0; i < 16 && !found; i++) {
-									for (int j = 0; j < 16 && !found; j++) {
-										int kk = ChunkTerrain.index(i, j);
-										if (c.building[kk] != 0 && c.plans.get(c.building[kk] - 1).id == plan.id) {
-											for (int dy = 1; dy <= plan.storey && !found; dy++) {
-												found = chunk.getBlockState(new BlockPos(i, plan.floorY + plan.storey + dy, j)).is(wall);
-											}
-										}
-									}
-								}
-								if (found) {
-									matched++;
-								}
-							}
-						}
-					}
-				}
-				log("map colours in 13 x 13 chunks of Stockholm: %d coloured buildings (%d built in their colour's block), walls %s; %d towers, %d standing",
-					coloured, matched, walls, towers, standing);
-				check(coloured >= 3 && matched * 10 >= coloured * 8, "buildings are built in their colours from the map (%d of %d)", matched, coloured);
-				check(towers >= 1 && standing == towers, "towers stand on the roofs of their buildings (%d of %d)", standing, towers);
-			}
-
-			// Roofs as mapped: OpenStreetMap's 3D tags from the Overture buildings tiles.
-			{
-				var detail = field.map() == null ? null : field.map().detail();
-				int shapes = -1;
-				try {
-					shapes = detail == null ? -1 : detail.tile(9014, 4818).get(120, java.util.concurrent.TimeUnit.SECONDS).shapes().size();
-				} catch (Exception e) {
-					log("building detail: %s", e);
-				}
-				java.util.Map<String, Integer> roofs = new java.util.TreeMap<>();
-				java.util.Map<String, Integer> caps = new java.util.TreeMap<>();
-				java.util.Set<Long> seenPlans = new java.util.HashSet<>();
-				// Over all of the city planned so far (the centre's blocks are mostly offices, roofs unmapped).
-				for (int cx = bestCx - 40; cx <= bestCx + 40; cx++) {
-					for (int cz = bestCz - 40; cz <= bestCz + 40; cz++) {
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						for (var plan : c == null ? List.<se.itssimple.realearth.terrain.BuildingPlan>of() : c.plans) {
-							if (seenPlans.add(plan.id)) {
-								roofs.merge(plan.roof.name(), 1, Integer::sum);
-								plan.towers.forEach(t -> caps.merge(t.roof().name(), 1, Integer::sum));
-							}
-						}
-					}
-				}
-				log("building detail: %d shapes in central Stockholm's tile; of %d buildings planned round it, roofs %s; tower caps %s", shapes, seenPlans.size(), roofs, caps);
-				int mapped = roofs.entrySet().stream().filter(e -> !e.getKey().equals("NONE")).mapToInt(java.util.Map.Entry::getValue).sum();
-				check(shapes > 100 && seenPlans.size() >= 30 && mapped * 20 >= seenPlans.size(), "buildings take their roofs as mapped (%d shapes in the tile, %d of %d buildings)",
-					shapes, mapped, seenPlans.size());
-			}
-
-			// Street life: the map's furniture where it is mapped, and parks with benches and fountains.
-			{
-				java.util.Map<String, Integer> life = new java.util.TreeMap<>();
-				int parkColumns = 0;
-				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						if (c == null) {
-							continue;
-						}
-						LevelChunk chunk = earth.getChunk(cx, cz);
-						for (int x = 0; x < 16; x++) {
-							for (int z = 0; z < 16; z++) {
-								int k = ChunkTerrain.index(x, z);
-								if (c.building[k] != 0) {
-									continue;
-								}
-								parkColumns += c.park[k] ? 1 : 0;
-								if (c.park[k] && c.way[k] == se.itssimple.realearth.osm.Ways.NONE) {
-									boolean path = false;
-									for (int[] d : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
-										path |= c.way[ChunkTerrain.index(x + d[0], z + d[1])] != se.itssimple.realearth.osm.Ways.NONE;
-									}
-									if (path) {
-										life.merge("park edges by paths", 1, Integer::sum);
-									}
-								}
-								int ground = c.topSolidY[k];
-								for (int y = ground + 1; y <= ground + 3; y++) {
-									var state = chunk.getBlockState(new BlockPos(x, y, z));
-									String what = state.is(Blocks.CAULDRON) ? "bins" : state.is(Blocks.WATER_CAULDRON) ? "drinking water"
-										: state.is(Blocks.WAXED_OXIDIZED_CHISELED_COPPER) ? "statues" : state.is(Blocks.CHISELED_QUARTZ_BLOCK) ? "monuments"
-										: state.is(Blocks.SPRUCE_STAIRS) ? "benches" : state.is(Blocks.STONE_BRICK_WALL) ? "fountain columns"
-										: state.is(Blocks.OAK_PRESSURE_PLATE) ? "picnic tables" : c.park[k] && state.is(Blocks.LANTERN) ? "park lamps"
-										: c.park[k] && state.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS) ? "park flowers" : null;
-									if (what != null) {
-										life.merge(what, 1, Integer::sum);
-									}
-								}
-							}
-						}
-					}
-				}
-				log("street life in 13 x 13 chunks of Stockholm: %s; %d park columns", life, parkColumns);
-				// A harbour from central Stockholm's map tile; its chunk generated, with its boats.
-				try {
-					for (var poi : field.map().tile(9014, 4818).get(60, java.util.concurrent.TimeUnit.SECONDS).pois()) {
-						if (java.util.Set.of("marina", "dock", "ferry_terminal").contains(poi.subclass())) {
-							double lat = se.itssimple.realearth.geo.Mercator.latitudeOfSampleY(poi.y());
-							double lon = (poi.x() + 0.5) / se.itssimple.realearth.geo.Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
-							int bx = (int) Math.floor(field.projection().blockX(lat, lon));
-							int bz = (int) Math.floor(field.projection().blockZ(lat));
-							earth.getChunk(bx >> 4, bz >> 4);
-							ChunkTerrain c = field.chunkIfReady(bx >> 4, bz >> 4);
-							if (c != null && c.pois.stream().anyMatch(q -> poi.subclass().equals(q.subclass()))) {
-								harbourAt = new int[] {bx >> 4, bz >> 4};
-								log("harbour: %s %s at %d,%d", poi.subclass(), poi.name(), bx, bz);
-								break;
-							}
-						}
-					}
-				} catch (Exception e) {
-					log("harbour: %s", e);
-				}
-				check(life.getOrDefault("bins", 0) >= 1 && life.getOrDefault("benches", 0) >= 3 && parkColumns > 200,
-					"streets and parks have their furniture (%s)", life);
-			}
-
-			// No lava lakes in the parks: in town, lava at the ground was made a pond.
-			{
+				int columns = 0;
+				int air = 0;
 				int lava = 0;
-				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						if (c == null) {
-							continue;
-						}
-						LevelChunk chunk = earth.getChunk(cx, cz);
+				java.util.Map<String, int[]> ores = new java.util.TreeMap<>();
+				BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+				for (int cx = -3; cx <= 3; cx++) {
+					for (int cz = -3; cz <= 3; cz++) {
+						LevelChunk c = earth.getChunk(startCx + cx, startCz + cz);
 						for (int x = 0; x < 16; x++) {
 							for (int z = 0; z < 16; z++) {
-								int ground = c.topSolidY[ChunkTerrain.index(x, z)];
-								for (int y = ground - 6; y <= ground + 4; y++) {
-									if (chunk.getFluidState(new BlockPos(x, y, z)).is(net.minecraft.tags.FluidTags.LAVA)) {
+								int top = c.getHeight(Heightmap.Types.OCEAN_FLOOR, x, z);
+								columns++;
+								for (int depth = 1; depth <= 140; depth++) {
+									BlockState s = c.getBlockState(p.set(x, top - depth, z));
+									if (s.isAir()) {
+										air++;
+									} else if (s.is(Blocks.LAVA)) {
 										lava++;
+									} else if (s.is(net.minecraft.tags.BlockTags.COAL_ORES) || s.is(net.minecraft.tags.BlockTags.IRON_ORES)
+										|| s.is(net.minecraft.tags.BlockTags.DIAMOND_ORES) || s.is(net.minecraft.tags.BlockTags.GOLD_ORES)
+										|| s.is(net.minecraft.tags.BlockTags.REDSTONE_ORES) || s.is(net.minecraft.tags.BlockTags.COPPER_ORES)) {
+										String name = s.getBlock().getDescriptionId().replace("block.minecraft.", "").replace("deepslate_", "");
+										int[] stat = ores.computeIfAbsent(name, n -> new int[2]);
+										stat[0]++;
+										stat[1] += depth;
 									}
 								}
 							}
 						}
 					}
 				}
-				check(lava == 0, "no lava at the ground in the city (%d blocks)", lava);
+				double caveShare = 100.0 * air / (columns * 140.0);
+				log("underground of %d columns, 1-140 m down: %.1f%% cave, %d lava", columns, caveShare, lava);
+				ores.forEach((name, stat) -> log("  %-14s %5d blocks, mean depth %3d m", name, stat[0], stat[1] / stat[0]));
+				check(caveShare > 1.0 && caveShare < 25.0, "caves exist underground (%.1f%% of the band)", caveShare);
+				check(ores.containsKey("coal_ore") && ores.containsKey("iron_ore"), "vanilla coal and iron generate");
+				int[] diamonds = ores.get("diamond_ore");
+				check(diamonds != null && diamonds[1] / diamonds[0] > 90, "diamonds generate deep: %s", diamonds == null ? "none" : diamonds[1] / diamonds[0] + " m mean depth");
+				int[] coal = ores.get("coal_ore");
+				check(coal != null && coal[1] / coal[0] < 70, "coal sits shallow: %s", coal == null ? "none" : coal[1] / coal[0] + " m mean depth");
 			}
+		}));
 
-			// Names on signs: over shop and hall doors, and on posts at street corners.
+		phases.add(Map.entry("Structures", () -> {
+			// Structures: starts around the origin and out in the Atlantic, and where they sit against the ground.
 			{
-				int streetSigns = 0;
-				int doorSigns = 0;
-				List<String> seen = new ArrayList<>();
-				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
-						for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
-							if (!(be instanceof net.minecraft.world.level.block.entity.SignBlockEntity sign)) {
-								continue;
-							}
-							StringBuilder text = new StringBuilder();
-							for (var line : sign.getFrontText().getMessages(false)) {
-								if (!line.getString().isEmpty()) {
-									text.append(text.length() > 0 ? " " : "").append(line.getString());
-								}
-							}
-							if (text.length() == 0) {
-								continue;
-							}
-							boolean wall = sign.getBlockState().getBlock() instanceof net.minecraft.world.level.block.WallSignBlock;
-							if (wall) {
-								doorSigns++;
-							} else {
-								streetSigns++;
-							}
-							if (seen.size() < 8) {
-								seen.add((wall ? "door: " : "street: ") + text);
-							}
-						}
-					}
-				}
-				log("signs in 13 x 13 chunks of Stockholm: %d street name posts, %d over doors; e.g. %s", streetSigns, doorSigns, seen);
-				check(streetSigns >= 10 && doorSigns >= 1, "streets and shops have their names on signs (%d streets, %d doors)", streetSigns, doorSigns);
-			}
-
-			// Nothing floats: every block in the buildings touches another, and what needs a floor has one.
-			{
-				int floating = 0;
-				int unsupported = 0;
-				int skyDoors = 0;
-				for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
-					for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
-						LevelChunk chunk = earth.getChunk(cx, cz);
-						ChunkTerrain c = field.chunkIfReady(cx, cz);
-						if (c == null) {
-							continue;
-						}
-						for (int x = 0; x < 16; x++) {
-							for (int z = 0; z < 16; z++) {
-								int k = ChunkTerrain.index(x, z);
-								if (c.building[k] == 0) {
+				var structures = earth.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
+				TerrainField field = RealEarth.terrain();
+				int atlanticX = (int) field.projection().blockX(45.0, -30.0) >> 4;
+				int atlanticZ = (int) field.projection().blockZ(45.0) >> 4;
+				for (int[] region : new int[][] {{startCx, startCz}, {atlanticX, atlanticZ}}) {
+					java.util.Map<String, Integer> counts = new java.util.TreeMap<>();
+					long ts = System.nanoTime();
+					for (int cx = region[0] - 32; cx < region[0] + 32; cx++) {
+						for (int cz = region[1] - 32; cz < region[1] + 32; cz++) {
+							var c = earth.getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.STRUCTURE_STARTS, true);
+							for (var e : c.getAllStarts().entrySet()) {
+								if (!e.getValue().isValid()) {
 									continue;
 								}
-								var plan = c.plans.get(c.building[k] - 1);
-								for (int y = plan.floorY + 1; y <= plan.roofBaseY() + plan.roofRise + 1; y++) {
-									BlockPos at = new BlockPos(cx * 16 + x, y, cz * 16 + z);
-									BlockState s = earth.getBlockState(at);
-									if (s.isAir()) {
-										continue;
-									}
-									// Stray: nothing at all in the 3 x 3 x 3 round it. (A stepped roof's blocks touch at
-									// their edges only, as every stair roof does, and look whole.)
-									boolean alone = true;
-									for (int dx = -1; dx <= 1 && alone; dx++) {
-										for (int dy = -1; dy <= 1 && alone; dy++) {
-											for (int dz = -1; dz <= 1 && alone; dz++) {
-												alone = dx == 0 && dy == 0 && dz == 0 || earth.getBlockState(at.offset(dx, dy, dz)).isAir();
-											}
-										}
-									}
-									if (alone) {
-										if (floating++ < 5) {
-											StringBuilder around = new StringBuilder();
-											for (int d = 0; d < 4; d++) {
-												int nx = x + (d == 1 ? 1 : d == 3 ? -1 : 0);
-												int nz = z + (d == 2 ? 1 : d == 0 ? -1 : 0);
-												int nk = ChunkTerrain.index(nx, nz);
-												around.append(" ").append(c.building[nk]).append("/").append(c.building[nk] == 0 ? "-" : String.valueOf(c.roofY[nk]));
-											}
-											log("  floating %s at %d,%d,%d: building %d (roof Y %d, %s, %d floors from Y %d); neighbours' buildings/roof Y:%s",
-												s.getBlock().getDescriptionId(), at.getX(), at.getY(), at.getZ(), c.building[k], c.roofY[k], plan.use, plan.floors, plan.floorY, around);
-										}
-									}
-									Block b = s.getBlock();
-									// A door in an outer wall above the ground floor opens onto a fall.
-									if (b instanceof net.minecraft.world.level.block.DoorBlock && y > plan.floorY + 3) {
-										boolean outer = false;
-										for (Direction d : Direction.Plane.HORIZONTAL) {
-											int nk = ChunkTerrain.index(x + d.getStepX(), z + d.getStepZ());
-											outer |= c.building[nk] != c.building[k];
-										}
-										if (outer && skyDoors++ < 3) {
-											log("  door to nowhere at %d,%d,%d", at.getX(), at.getY(), at.getZ());
-										}
-									}
-									boolean needsFloor = b instanceof net.minecraft.world.level.block.CarpetBlock || b instanceof net.minecraft.world.level.block.PressurePlateBlock
-										|| b instanceof net.minecraft.world.level.block.FlowerPotBlock || b instanceof net.minecraft.world.level.block.BedBlock;
-									if (needsFloor && earth.getBlockState(at.below()).isAir()) {
-										if (unsupported++ < 5) {
-											log("  unsupported %s at %d,%d,%d", b.getDescriptionId(), at.getX(), at.getY(), at.getZ());
-										}
-									}
+								String name = structures.getKey(e.getKey()).getPath();
+								counts.merge(name, 1, Integer::sum);
+								var box = e.getValue().getBoundingBox();
+								ChunkTerrain t;
+								try {
+									t = field.chunkBlocking(cx, cz, 60);
+								} catch (Exception ex) {
+									continue;
+								}
+								int k = ChunkTerrain.index(8, 8);
+								int ground = t.topSolidY[k];
+								int water = t.waterTopY[k];
+								if (counts.get(name) <= 2) {
+									log("  %-18s chunk %6d,%6d  Y %d..%d, ground at Y %d", name, cx, cz, box.minY(), box.maxY(), ground);
+								}
+								if (name.startsWith("ancient_city") || name.startsWith("trial_chambers")) {
+									check(box.maxY() < ground + 10, "%s is under the ground (top Y %d, ground Y %d)", name, box.maxY(), ground);
+								}
+								if (name.equals("monument")) {
+									check(box.minY() < VerticalScale.SEA_LEVEL_Y && box.maxY() <= Math.max(water, ground) + 2,
+										"monument sits under the sea (Y %d..%d, sea surface Y %d)", box.minY(), box.maxY(), water);
+								}
+								if (name.equals("mineshaft") || name.equals("stronghold")) {
+									check(box.minY() >= VerticalScale.SEA_LEVEL_Y - 140, "%s within vanilla depth of sea level (Y %d)", name, box.minY());
 								}
 							}
 						}
 					}
+					log("structure starts in 64 x 64 chunks at %d,%d (%d ms, world seed %d): %s", region[0], region[1], (System.nanoTime() - ts) / 1_000_000,
+						earth.getSeed(), counts);
+					check(!counts.isEmpty(), "structures generate");
+					int villages = counts.entrySet().stream().filter(e -> e.getKey().startsWith("village")).mapToInt(java.util.Map.Entry::getValue).sum();
+					if (region[0] == startCx) {
+						// 64 x 64 chunks of central Stockholm is about 1 km square of city.
+						// Central Stockholm's buildings are all mapped, so they are built instead of villages.
+						check(villages <= 3, "real buildings replace villages in the city: %d villages in 1 km square", villages);
+						check(!counts.containsKey("pillager_outpost"), "no pillager outposts in the city");
+					} else {
+						check(villages == 0, "no villages out at sea");
+					}
 				}
-				log("in 3 x 3 chunks of buildings: %d floating blocks, %d with nothing under them, %d door blocks in outer walls above the ground floor",
-					floating, unsupported, skyDoors);
-				check(floating == 0 && unsupported == 0, "nothing in the buildings floats (%d floating, %d unsupported)", floating, unsupported);
-				check(skyDoors == 0, "street doors are on the ground floor only (%d higher up)", skyDoors);
 			}
+		}));
 
-			// Every room of a block of flats can be walked to: in at a street door, through the doors,
-			// up the stairs, on every floor.
+		phases.add(Map.entry("Roads and railways", () -> {
+			// Roads and railways: central Stockholm, about 600 m square around the start.
 			{
-				int buildings = 0;
-				int reached = 0;
-				int total = 0;
-				// The same buildings every run: all candidates in 13 x 13 chunks, in a fixed order.
-				java.util.Map<Long, se.itssimple.realearth.terrain.BuildingPlan> candidates = new java.util.TreeMap<>();
-				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
-					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+				TerrainField field = RealEarth.terrain();
+				int paved = 0;
+				int paths = 0;
+				int track = 0;
+				int decks = 0;
+				int bestRails = 0;
+				int bestCx = 0;
+				int bestCz = 0;
+				for (int cx = startCx - 20; cx <= startCx + 20; cx++) {
+					for (int cz = startCz - 20; cz <= startCz + 20; cz++) {
 						ChunkTerrain c;
 						try {
 							c = field.chunkBlocking(cx, cz, 120);
 						} catch (Exception e) {
 							continue;
 						}
-						for (var plan : c.plans) {
-							if (plan.floors >= 3 && (plan.use == se.itssimple.realearth.terrain.BuildingPlan.Use.FLATS
-								|| plan.use == se.itssimple.realearth.terrain.BuildingPlan.Use.OFFICES)
-								&& plan.maxX - plan.minX <= 48 && plan.maxZ - plan.minZ <= 48) {
-								candidates.put(plan.id, plan);
+						int rails = 0;
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								byte w = c.way[k];
+								if (se.itssimple.realearth.osm.Ways.isPaved(w)) {
+									paved++;
+								} else if (w == se.itssimple.realearth.osm.Ways.PATH) {
+									paths++;
+								} else if (w == se.itssimple.realearth.osm.Ways.RAIL) {
+									rails++;
+								}
+								if (c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE) {
+									decks++;
+								}
+							}
+						}
+						track += rails;
+						if (rails > bestRails) {
+							bestRails = rails;
+							bestCx = cx;
+							bestCz = cz;
+						}
+					}
+				}
+				log("ways in 41 x 41 chunks of central Stockholm: %d paved, %d path, %d rail, %d bridge deck columns", paved, paths, track, decks);
+				check(paved > 20_000 && paths > 2_000, "streets and paths are drawn in the city");
+				check(decks > 100, "bridges carry ways over the water");
+				// A surface railway from the map itself: the longest non-bridge line in the tile north of the city.
+				{
+					int mx = (int) Math.floor(Mercator.sampleX(18.0278) / (Mercator.TILE_SIZE * 2));
+					int my = (int) Math.floor(Mercator.sampleY(59.3497) / (Mercator.TILE_SIZE * 2));
+					double[] longest = null;
+					for (var w : field.map().tile(mx, my).join().ways()) {
+						if (w.kind() == se.itssimple.realearth.osm.Ways.RAIL && !w.bridge() && (longest == null || w.points().length > longest.length)) {
+							longest = w.points();
+						}
+					}
+					if (longest != null) {
+						int mid = (longest.length / 4) * 2;
+						double rLat = Mercator.latitudeOfSampleY(longest[mid + 1]);
+						double rLon = (longest[mid] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
+						int tCx = (int) field.projection().blockX(rLat, rLon) >> 4;
+						int tCz = (int) field.projection().blockZ(rLat) >> 4;
+						for (int cx = tCx - 3; cx <= tCx + 3; cx++) {
+							for (int cz = tCz - 3; cz <= tCz + 3; cz++) {
+								ChunkTerrain c;
+								try {
+									c = field.chunkBlocking(cx, cz, 120);
+								} catch (Exception e) {
+									continue;
+								}
+								int rails = 0;
+								for (int x = 0; x < 16; x++) {
+									for (int z = 0; z < 16; z++) {
+										if (c.way[ChunkTerrain.index(x, z)] == se.itssimple.realearth.osm.Ways.RAIL) {
+											rails++;
+										}
+									}
+								}
+								track += rails;
+								if (rails > bestRails) {
+									bestRails = rails;
+									bestCx = cx;
+									bestCz = cz;
+								}
+							}
+						}
+						log("railway at %.5f, %.5f: %d track columns nearby; most in chunk %d,%d (%d)", rLat, rLon, track, bestCx, bestCz, bestRails);
+					}
+				}
+				check(track > 40, "railways are drawn");
+				if (bestRails > 0) {
+					LevelChunk c = earth.getChunk(bestCx, bestCz);
+					ChunkTerrain terrain = RealEarth.terrain().chunkIfReady(bestCx, bestCz);
+					int placed = 0;
+					int joined = 0;
+					for (int x = 0; x < 16; x++) {
+						for (int z = 0; z < 16; z++) {
+							if (terrain != null && terrain.way[ChunkTerrain.index(x, z)] == se.itssimple.realearth.osm.Ways.RAIL) {
+								BlockState rail = c.getBlockState(new BlockPos(x, terrain.topSolidY[ChunkTerrain.index(x, z)] + 1, z));
+								if (placed == 0 && !rail.is(Blocks.RAIL)) {
+									int ty = terrain.topSolidY[ChunkTerrain.index(x, z)];
+									log("track column %d,%d top Y %d: %s / %s / %s; heightmap %d", x, z, ty, c.getBlockState(new BlockPos(x, ty - 1, z)),
+										c.getBlockState(new BlockPos(x, ty, z)), rail, c.getHeight(Heightmap.Types.WORLD_SURFACE, x, z));
+								}
+								if (rail.is(Blocks.RAIL)) {
+									placed++;
+									var shape = rail.getValue(net.minecraft.world.level.block.RailBlock.SHAPE);
+									if (shape != net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH || terrain.way[ChunkTerrain.index(x, z - 1)] == se.itssimple.realearth.osm.Ways.RAIL
+										|| terrain.way[ChunkTerrain.index(x, z + 1)] == se.itssimple.realearth.osm.Ways.RAIL) {
+										joined++;
+									}
+								}
+							}
+						}
+					}
+					check(placed >= bestRails * 7 / 10 && joined >= placed * 9 / 10,
+						"rails are laid along the track: %d of %d track columns, %d joined to a neighbour", placed, bestRails, joined);
+				}
+			}
+		}));
+
+		phases.add(Map.entry("Västerbron", () -> {
+			// Västerbron, the long road bridge over Riddarfjärden: every chunk along it, decks over the water.
+			{
+				TerrainField field = RealEarth.terrain();
+				int mx = (int) Math.floor(Mercator.sampleX(18.0262) / (Mercator.TILE_SIZE * 2));
+				int my = (int) Math.floor(Mercator.sampleY(59.3228) / (Mercator.TILE_SIZE * 2));
+				double[] longest = null;
+				for (var w : field.map().tile(mx, my).join().ways()) {
+					if (w.bridge() && se.itssimple.realearth.osm.Ways.isPaved(w.kind()) && (longest == null || length(w.points()) > length(longest))) {
+						longest = w.points();
+					}
+				}
+				java.util.Set<Long> along = new java.util.LinkedHashSet<>();
+				if (longest != null) {
+					for (int i = 0; i + 1 < longest.length; i += 2) {
+						double rLat = Mercator.latitudeOfSampleY(longest[i + 1]);
+						double rLon = (longest[i] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
+						along.add(ChunkPos.pack((int) field.projection().blockX(rLat, rLon) >> 4, (int) field.projection().blockZ(rLat) >> 4));
+					}
+				}
+				int decks = 0;
+				int placed = 0;
+				int overWater = 0;
+				for (long key : along) {
+					try {
+						ChunkTerrain c = field.chunkBlocking(ChunkPos.getX(key), ChunkPos.getZ(key), 120);
+						LevelChunk chunk = earth.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key));
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.deckY[k] != Integer.MIN_VALUE && c.deckWay[k] != se.itssimple.realearth.osm.Ways.NONE) {
+									decks++;
+									if (c.waterTopY[k] != Integer.MIN_VALUE) {
+										overWater++;
+									}
+									BlockState at = chunk.getBlockState(new BlockPos(x, c.deckY[k], z));
+									if (!at.isAir() && at.getFluidState().isEmpty()) {
+										placed++;
+									} else if (decks - placed == 1) {
+										log("deck column %d,%d: deck Y %d (%.1f m), water top %d, ground top %d, block there %s", x, z, c.deckY[k], c.deckMeters[k],
+											c.waterTopY[k], c.topSolidY[k], at);
+									}
+								}
+							}
+						}
+					} catch (Exception e) {
+						log("bridge chunk failed: %s", e);
+					}
+				}
+				log("Västerbron: %d chunks along it, %d deck columns (%d over water), %d with a deck block", along.size(), decks, overWater, placed);
+				check(overWater > 50 && placed >= decks * 9 / 10, "Västerbron's deck stands over the water (%d of %d columns)", placed, decks);
+
+				// Every paved bridge in the map tiles of Västerbron, the city centre and Slussen can be walked
+				// onto and along: down its centreline, from a few blocks before it to a few after, the surface
+				// never steps more than a block.
+				int bridges = 0;
+				int columns = 0;
+				int steps = 0;
+				java.util.Set<Long> walkedTiles = new java.util.LinkedHashSet<>();
+				for (double[] at : new double[][] {{59.3228, 18.0262}, {59.3293, 18.0686}, {59.3195, 18.0717}}) {
+					walkedTiles.add(ChunkPos.pack((int) Math.floor(Mercator.sampleX(at[1]) / (Mercator.TILE_SIZE * 2)),
+						(int) Math.floor(Mercator.sampleY(at[0]) / (Mercator.TILE_SIZE * 2))));
+				}
+				for (long tile : walkedTiles) {
+					for (var w : field.map().tile(ChunkPos.getX(tile), ChunkPos.getZ(tile)).join().ways()) {
+						if (!w.bridge() || !se.itssimple.realearth.osm.Ways.isPaved(w.kind())) {
+							continue;
+						}
+						bridges++;
+						int[] walked = walkSteps(field, w.points(), 8);
+						columns += walked[0];
+						steps += walked[1];
+						if (walked[1] > 0 && walked[2] != Integer.MIN_VALUE) {
+							log("bridge step: %d blocks at block %d,%d", walked[3], walked[2], walked[4]);
+						}
+					}
+				}
+				log("bridges in %d map tiles of Stockholm: %d, %d columns along them, %d steps of more than a block", walkedTiles.size(), bridges, columns, steps);
+				check(bridges > 10 && steps * 1000 <= columns, "bridges are walkable: %d steps over %d columns", steps, columns);
+			}
+		}));
+
+		phases.add(Map.entry("Place names", () -> {
+			// Place names: which town and district a position is in, from the map.
+			{
+				TerrainField field = RealEarth.terrain();
+				String[][] expect = {{"59.3150", "18.0720", "Stockholm", "Södermalm"}, {"59.3250", "18.0710", "Stockholm", "Gamla stan"},
+					{"67.5000", "20.3000", null, null}};
+				for (String[] e : expect) {
+					double lat = Double.parseDouble(e[0]);
+					double lon = Double.parseDouble(e[1]);
+					double bx = field.projection().blockX(lat, lon);
+					double bz = field.projection().blockZ(lat);
+					se.itssimple.realearth.world.Places.Here here = null;
+					for (int i = 0; i < 300 && here == null; i++) {
+						here = se.itssimple.realearth.world.Places.at(field, bx, bz);
+						if (here == null) {
+							try {
+								Thread.sleep(200);
+							} catch (InterruptedException ex) {
+								Thread.currentThread().interrupt();
+							}
+						}
+					}
+					var got = here;
+					log("place at %s, %s: %s", e[0], e[1], got);
+					check(got != null && java.util.Objects.equals(got.town(), e[2]) && java.util.Objects.equals(got.district(), e[3]),
+						"%s, %s is in %s, %s", e[0], e[1], e[3], e[2]);
+					check(got != null && got.capital() == (e[2] != null), "%s, %s is %sa capital", e[0], e[1], e[2] != null ? "" : "not ");
+				}
+			}
+		}));
+
+		phases.add(Map.entry("Advancements for real places", () -> {
+			// Advancements for real places: all load, under one root.
+			{
+				int found = 0;
+				for (String name : new String[] {"root", "town", "capital", "equator", "polar_circle", "prime_meridian", "date_line", "thin_air", "below_the_sea"}) {
+					if (server.getAdvancements().get(RealEarth.id(name)) != null) {
+						found++;
+					}
+				}
+				check(found == 9, "the Real Earth advancements load (%d of 9)", found);
+			}
+		}));
+
+		phases.add(Map.entry("Cemeteries and allotments", () -> {
+			// Cemeteries and allotments: Norra begravningsplatsen's headstones, Tantolunden's plots.
+			{
+				TerrainField field = RealEarth.terrain();
+				ServerLevel level = RealEarth.earthLevel(server);
+				int[] found = new int[4];
+				for (double[] place : new double[][] {{59.3555, 18.0225}, {59.3122, 18.0470}}) {
+					int cx0 = (int) Math.floor(field.projection().blockX(place[0], place[1])) >> 4;
+					int cz0 = (int) Math.floor(field.projection().blockZ(place[0])) >> 4;
+					for (int cx = cx0 - 2; cx <= cx0 + 2; cx++) {
+						for (int cz = cz0 - 2; cz <= cz0 + 2; cz++) {
+							LevelChunk chunk = level.getChunk(cx, cz);
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							for (int k2 = 0; c != null && k2 < 256; k2++) {
+								int x = k2 & 15;
+								int z = k2 >> 4;
+								int k = ChunkTerrain.index(x, z);
+								var above = chunk.getBlockState(new BlockPos(x, c.topSolidY[k] + 1, z));
+								if (c.grounds[k] == ChunkTerrain.CEMETERY) {
+									found[0]++;
+									found[1] += above.is(Blocks.STONE_BRICK_WALL) || above.is(Blocks.MOSSY_STONE_BRICK_WALL) || above.is(Blocks.ANDESITE_WALL)
+										|| above.is(Blocks.CHISELED_STONE_BRICKS) ? 1 : 0;
+								} else if (c.grounds[k] == ChunkTerrain.ALLOTMENT) {
+									found[2]++;
+									found[3] += above.is(net.minecraft.tags.BlockTags.CROPS) ? 1 : 0;
+								}
 							}
 						}
 					}
 				}
-				for (var plan : candidates.values()) {
-					if (buildings >= 12) {
-						break;
+				log("cemetery: %d columns, %d headstones; allotments: %d columns, %d crops", found[0], found[1], found[2], found[3]);
+				check(found[0] > 100 && found[1] > 10 && found[2] > 50 && found[3] > 25, "cemeteries have headstones, allotments crops (%d, %d)", found[1], found[3]);
+			}
+		}));
+
+		phases.add(Map.entry("Spawning on land", () -> {
+			// Spawning on land: a start point out on Saltsjön moves to the shore.
+			{
+				TerrainField field = RealEarth.terrain();
+				int x = (int) field.projection().blockX(59.3205, 18.1100);
+				int z = (int) field.projection().blockZ(59.3205);
+				int[] land = field.landNear(x, z);
+				ChunkTerrain t = field.chunkIfReady(land[0] >> 4, land[1] >> 4);
+				boolean dry = t != null && t.waterTopY[ChunkTerrain.index(land[0] & 15, land[1] & 15)] == Integer.MIN_VALUE;
+				double km = Math.hypot(land[0] - x, land[1] - z) / field.projection().blocksPerMeter(59.32) / 1000;
+				log("spawn from Saltsjön: land at %d,%d, %.2f km away, %s", land[0], land[1], km, dry ? "dry" : "in water");
+				check(dry && km > 0.05 && km < 3, "a start point in the sea moves to the nearest land (%.2f km)", km);
+			}
+		}));
+
+		phases.add(Map.entry("Fish in lakes above the sea", () -> {
+			// Fish in lakes above the sea: Siljan, 161 m up.
+			{
+				TerrainField field = RealEarth.terrain();
+				int x = (int) field.projection().blockX(60.88, 14.75);
+				int z = (int) field.projection().blockZ(60.88);
+				var chunk = earth.getChunk(x >> 4, z >> 4);
+				int top = chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, x & 15, z & 15);
+				BlockPos pos = new BlockPos(x, top - 2, z);
+				boolean water = earth.getFluidState(pos).is(net.minecraft.tags.FluidTags.WATER) && earth.getFluidState(pos.above(2)).is(net.minecraft.tags.FluidTags.WATER);
+				int ok = 0;
+				for (long seed = 0; seed < 20; seed++) {
+					ok += net.minecraft.world.entity.animal.fish.WaterAnimal.checkSurfaceWaterAnimalSpawnRules(net.minecraft.world.entity.EntityType.COD, earth,
+						net.minecraft.world.entity.EntitySpawnReason.NATURAL, pos, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
+				}
+				log("fish in Siljan: water surface at Y %d (%s), the spawn rule allows %d of 20", top - 1, water ? "deep enough" : "not water", ok);
+				check(water && ok == 20, "fish may spawn in lakes above the sea (%d of 20)", ok);
+			}
+		}));
+
+		// Railways you can ride: every rail joins the next, on the ground, over bridges and through tunnels.
+		// Karlberg's yards; the main line by Marsta; the Arlanda line going under ground; Gothenburg's rail
+		// tunnels; Soderledstunneln, a road under Sodermalm. An area a phase; the sums judged at the end.
+		int[] ride = new int[9];
+		for (double[] place : new double[][] {{59.3458, 18.0182}, {59.6200, 17.8600}, {59.6141, 17.8612}, {57.7150, 11.9904}, {59.3140, 18.0700}}) {
+			phases.add(Map.entry(String.format(java.util.Locale.ROOT, "Railways at %.4f, %.4f", place[0], place[1]), () -> {
+				TerrainField field = RealEarth.terrain();
+				int cx = (int) Math.floor(field.projection().blockX(place[0], place[1])) >> 4;
+				int cz = (int) Math.floor(field.projection().blockZ(place[0])) >> 4;
+				int[] r = rideRails(earth, field, cx, cz, 3);
+				log("rails at %.4f, %.4f: %d rails, %d broken ends (%d on a gap, %d not joining), %d track ends, %d powered (%d without power); "
+					+ "%d tunnel columns, %d lanterns", place[0], place[1], r[0], r[1], r[4], r[5], r[8], r[2], r[3], r[6], r[7]);
+				for (int i = 0; i < ride.length; i++) {
+					ride[i] += r[i];
+				}
+			}));
+		}
+		phases.add(Map.entry("Railways: the verdict", () -> {
+			check(ride[0] > 100 && ride[1] * 200 <= ride[0], "rails join up end to end (%d broken ends over %d rails)", ride[1], ride[0]);
+			check(ride[2] * 20 >= ride[0] && ride[3] == 0, "railways are powered (%d powered rails, %d without power, over %d rails)", ride[2], ride[3], ride[0]);
+			check(ride[6] > 50 && ride[7] > 0, "railway tunnels are dug out and lit (%d tunnel columns, %d lanterns)", ride[6], ride[7]);
+		}));
+
+		phases.add(Map.entry("Slimes", () -> {
+			// Slimes: in slime chunks only well below the sea, as in vanilla; not on the surface.
+			{
+				TerrainField field = RealEarth.terrain();
+				int startX = (int) field.projection().blockX(59.3293, 18.0686) >> 4;
+				int startZ = (int) field.projection().blockZ(59.3293) >> 4;
+				int surface = 0;
+				int deep = 0;
+				int chunks = 0;
+				for (int cx = startX - 8; cx <= startX + 8 && chunks < 3; cx++) {
+					for (int cz = startZ - 8; cz <= startZ + 8 && chunks < 3; cz++) {
+						if (net.minecraft.world.level.levelgen.WorldgenRandom.seedSlimeChunk(cx, cz, earth.getSeed(), 987234911L).nextInt(10) != 0) {
+							continue;
+						}
+						chunks++;
+						var chunk = earth.getChunk(cx, cz);
+						int x = cx * 16 + 8;
+						int z = cz * 16 + 8;
+						BlockPos top = new BlockPos(x, chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, 8, 8) + 1, z);
+						BlockPos low = new BlockPos(x, VerticalScale.SEA_LEVEL_Y - 60, z);
+						for (long seed = 0; seed < 200; seed++) {
+							surface += net.minecraft.world.entity.monster.Slime.checkSlimeSpawnRules(net.minecraft.world.entity.EntityType.SLIME, earth,
+								net.minecraft.world.entity.EntitySpawnReason.NATURAL, top, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
+							deep += net.minecraft.world.entity.monster.Slime.checkSlimeSpawnRules(net.minecraft.world.entity.EntityType.SLIME, earth,
+								net.minecraft.world.entity.EntitySpawnReason.NATURAL, low, net.minecraft.util.RandomSource.create(seed)) ? 1 : 0;
+						}
 					}
-					// Only a building that stands on its whole footprint: where mapped buildings overlap,
-					// a column is the first one's, and the other is built in part or not at all.
-					int mine = 0;
-					int area = 0;
-					for (int x = (int) Math.floor(plan.minX); x <= (int) Math.ceil(plan.maxX); x++) {
-						for (int z = (int) Math.floor(plan.minZ); z <= (int) Math.ceil(plan.maxZ); z++) {
-							if (!plan.contains(x, z)) {
+				}
+				log("slime spawn rule in %d slime chunks, 200 tries each: %d on the surface, %d 60 blocks under the sea", chunks, surface, deep);
+				check(chunks > 0 && surface == 0 && deep > 0, "slimes spawn deep in slime chunks, not on the surface (%d surface, %d deep)", surface, deep);
+			}
+		}));
+
+		phases.add(Map.entry("Buildings", () -> {
+			// Buildings: central Stockholm, as planned and as built.
+			{
+				TerrainField field = RealEarth.terrain();
+				int columns = 0;
+				int maxFloors = 0;
+				int minStorey = Integer.MAX_VALUE;
+				int bestCx = 0;
+				int bestCz = 0;
+				int bestColumns = 0;
+				java.util.Set<Long> ids = new java.util.HashSet<>();
+				for (int cx = startCx - 6; cx <= startCx + 6; cx++) {
+					for (int cz = startCz - 6; cz <= startCz + 6; cz++) {
+						ChunkTerrain c;
+						try {
+							c = field.chunkBlocking(cx, cz, 120);
+						} catch (Exception e) {
+							continue;
+						}
+						int here = 0;
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								if (c.building[ChunkTerrain.index(x, z)] != 0) {
+									here++;
+								}
+							}
+						}
+						for (var plan : c.plans) {
+							ids.add(plan.id);
+							maxFloors = Math.max(maxFloors, plan.floors);
+							minStorey = Math.min(minStorey, plan.storey);
+						}
+						columns += here;
+						if (here > bestColumns) {
+							bestColumns = here;
+							bestCx = cx;
+							bestCz = cz;
+						}
+					}
+				}
+				log("buildings in 13 x 13 chunks of central Stockholm: %d buildings over %d columns; up to %d floors, storeys at least %d blocks",
+					ids.size(), columns, maxFloors, minStorey);
+				check(ids.size() > 20 && columns > 10_000, "the city's real buildings are planned");
+				check(maxFloors <= RealEarth.config().maxFloors && maxFloors >= 4 && minStorey >= 5, "floors are 5+ blocks, at most %d of them", RealEarth.config().maxFloors);
+
+				java.util.Map<String, Integer> blocks = new java.util.TreeMap<>();
+				for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
+					for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
+						LevelChunk c = earth.getChunk(cx, cz);
+						ChunkTerrain t = field.chunkIfReady(cx, cz);
+						if (t == null) {
+							continue;
+						}
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (t.building[k] == 0) {
+									continue;
+								}
+								var plan = t.plans.get(t.building[k] - 1);
+								for (int y = plan.floorY; y <= t.roofY[k] + 1; y++) {
+									String name = c.getBlockState(new BlockPos(x, y, z)).getBlock().getDescriptionId().replace("block.minecraft.", "");
+									blocks.merge(name, 1, Integer::sum);
+								}
+							}
+						}
+					}
+				}
+				log("blocks in 3 x 3 chunks of buildings: %s", blocks);
+				// Beds over the whole centre: the 3 x 3 chunks can be all offices.
+				int beds = 0;
+				int mostBeds = 0;
+				for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+					for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+						earth.getChunk(cx, cz);
+						ChunkTerrain t = field.chunkIfReady(cx, cz);
+						beds += t == null ? 0 : t.beds.size();
+						if (t != null && t.beds.size() > mostBeds) {
+							mostBeds = t.beds.size();
+							homesAt = new int[] {cx, cz};
+						}
+					}
+				}
+				int doors = blocks.entrySet().stream().filter(e -> e.getKey().endsWith("_door")).mapToInt(java.util.Map.Entry::getValue).sum();
+				check(blocks.getOrDefault("glass_pane", 0) > 100 && blocks.getOrDefault("lantern", 0) > 5 && blocks.getOrDefault("air", 0) > 1000,
+					"buildings have windows, lanterns and rooms");
+				check(beds >= 5 && doors >= 6, "buildings have beds (%d) and door blocks (%d)", beds, doors);
+				// Chests and storeroom barrels carry a loot table (so Lootr converts them); job barrels and
+				// chiseled bookshelves don't, but the shelves hold books.
+				int looted = 0;
+				int containers = 0;
+				int books = 0;
+				for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
+					for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
+						for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
+							if (be instanceof net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity r) {
+								containers++;
+								if (r.getLootTable() != null) {
+									looted++;
+								}
+							} else if (be instanceof net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity shelf) {
+								books += shelf.getItems().stream().filter(s -> !s.isEmpty()).count();
+							}
+						}
+					}
+				}
+				log("containers in 3 x 3 chunks of buildings: %d, %d with a loot table; %d books on chiseled shelves", containers, looted, books);
+				check(looted >= 3 && looted * 2 >= containers, "chests and storeroom barrels have loot tables (%d of %d)", looted, containers);
+				lootrCheck = new int[] {bestCx, bestCz, looted};
+				var storeroom = server.reloadableRegistries().getLootTable(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.LOOT_TABLE,
+					net.minecraft.resources.Identifier.fromNamespaceAndPath("realearth", "chests/storeroom")));
+				check(storeroom != net.minecraft.world.level.storage.loot.LootTable.EMPTY, "the storeroom loot table loads");
+				// Town maps in bookshops: a filled map of the town, named after it.
+				{
+					var bookshop = server.reloadableRegistries().getLootTable(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.LOOT_TABLE,
+						net.minecraft.resources.Identifier.fromNamespaceAndPath("realearth", "chests/shop_books")));
+					net.minecraft.world.phys.Vec3 at = new net.minecraft.world.phys.Vec3(field.projection().blockX(59.3250, 18.0710), 0, field.projection().blockZ(59.3250));
+					var params = new net.minecraft.world.level.storage.loot.LootParams.Builder(earth)
+						.withParameter(net.minecraft.world.level.storage.loot.parameters.LootContextParams.ORIGIN, at)
+						.create(net.minecraft.world.level.storage.loot.parameters.LootContextParamSets.CHEST);
+					net.minecraft.world.item.ItemStack map = null;
+					for (long seed = 0; seed < 200 && map == null; seed++) {
+						for (var stack : bookshop.getRandomItems(params, seed)) {
+							if (stack.is(net.minecraft.world.item.Items.FILLED_MAP) || stack.is(net.minecraft.world.item.Items.MAP)) {
+								map = stack;
+							}
+						}
+					}
+					String name = map == null ? "none" : map.getHoverName().getString();
+					log("town map from a bookshop in Gamla stan: %s, %s", map == null ? "none" : map.getItem(), name);
+					check(map != null && map.is(net.minecraft.world.item.Items.FILLED_MAP) && name.contains("Stockholm"), "bookshops sell maps of their own town (%s)", name);
+				}
+
+				// What the buildings of the city centre are used for, from the map's shops and land use.
+				{
+					java.util.Map<String, Integer> uses = new java.util.TreeMap<>();
+					java.util.Map<String, Integer> trades = new java.util.TreeMap<>();
+					java.util.Map<String, Integer> kinds = new java.util.TreeMap<>();
+					java.util.Set<Long> seen = new java.util.HashSet<>();
+					for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+						for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							if (c == null) {
 								continue;
 							}
-							area++;
-							ChunkTerrain c = field.chunkIfReady(x >> 4, z >> 4);
-							int k = ChunkTerrain.index(x & 15, z & 15);
-							if (c != null && c.building[k] != 0 && c.plans.get(c.building[k] - 1).id == plan.id) {
-								mine++;
-							}
-						}
-					}
-					if (mine < area * 0.98) {
-						continue;
-					}
-					int[] walk = walkRooms(earth, plan);
-					buildings++;
-					reached += walk[0];
-					total += walk[1];
-					log("  %d-storey %s at %d,%d: %d of %d rooms reached (%d stairwells, %d doors)", plan.floors, plan.use, (int) plan.minX, (int) plan.minZ,
-						walk[0], walk[1], plan.interior().stairs.size(), plan.interior().doors.size());
-				}
-				log("rooms reached in %d blocks of flats and offices: %d of %d", buildings, reached, total);
-				check(buildings >= 2 && reached == total, "every room of the flats and offices can be walked to (%d of %d)", reached, total);
-			}
-			var villagers = earth.getEntities(net.minecraft.world.entity.EntityType.VILLAGER,
-				new net.minecraft.world.phys.AABB((bestCx - 2) * 16, VerticalScale.MIN_Y, (bestCz - 2) * 16, (bestCx + 3) * 16, VerticalScale.MAX_Y, (bestCz + 3) * 16),
-				e -> true);
-			log("villagers in 5 x 5 chunks of buildings: %d", villagers.size());
-		}
-
-		// Fagersjö: the map merges a tile's buildings of one height into one feature; each must still be
-		// planned on its own, standing on its own ground.
-		{
-			TerrainField field = RealEarth.terrain();
-			int mx = (int) Math.floor(Mercator.sampleX(18.0623) / (Mercator.TILE_SIZE * 2));
-			int my = (int) Math.floor(Mercator.sampleY(59.2465) / (Mercator.TILE_SIZE * 2));
-			int count = field.map().tile(mx, my).join().buildings().size();
-			check(count > 200, "merged map buildings are split into single buildings: %d in Fagersjö's tile", count);
-			int fx = (int) field.projection().blockX(59.2465, 18.0623) >> 4;
-			int fz = (int) field.projection().blockZ(59.2465) >> 4;
-			int columns = 0;
-			int high = 0;
-			int worst = 0;
-			for (int cx = fx - 8; cx <= fx + 8; cx++) {
-				for (int cz = fz - 8; cz <= fz + 8; cz++) {
-					ChunkTerrain c;
-					try {
-						c = field.chunkBlocking(cx, cz, 120);
-					} catch (Exception e) {
-						continue;
-					}
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							int k = ChunkTerrain.index(x, z);
-							if (c.building[k] != 0) {
-								int lift = c.plans.get(c.building[k] - 1).floorY - c.topSolidY[k];
-								columns++;
-								worst = Math.max(worst, Math.abs(lift));
-								if (Math.abs(lift) > 6) {
-									high++;
+							for (var plan : c.plans) {
+								if (!seen.add(plan.id)) {
+									continue;
 								}
+								uses.merge(plan.use + (plan.hall != null ? "/" + plan.hall : ""), 1, Integer::sum);
+								if (plan.floors > 1 && plan.use != se.itssimple.realearth.terrain.BuildingPlan.Use.WAREHOUSE) {
+									uses.merge(plan.interior().stairs.isEmpty() ? "storeys by ladder" : "storeys by stairs", 1, Integer::sum);
+									if (plan.interior().stairs.isEmpty()) {
+										log("ladder building %d (%s, %d floors of %d): ground floor\n%s", plan.id, plan.use, plan.floors, plan.storey, plan.interior().sketch(0));
+									}
+								}
+								plan.shops.forEach(s -> trades.merge(s.trade().name(), 1, Integer::sum));
+								plan.interior().rooms.forEach(r -> kinds.merge(r.kind.name(), 1, Integer::sum));
 							}
 						}
 					}
+					log("building uses in 13 x 13 chunks of Stockholm: %s; shops %s; rooms %s", uses, trades, kinds);
+					check(uses.getOrDefault("FLATS", 0) + uses.getOrDefault("OFFICES", 0) > 10 && !trades.isEmpty() && kinds.getOrDefault("BED", 0) > 20,
+						"buildings are flats, offices and shops, divided into rooms");
 				}
-			}
-			log("Fagersjö: %d building columns, %d more than 6 blocks off their ground, worst %d", columns, high, worst);
-			check(columns > 1000 && high < columns / 10, "buildings stand on their own ground: %d of %d columns more than 6 blocks off", high, columns);
-		}
 
-		// Paris: no building stands taller than its storeys allow, in chunks or in distant terrain.
-		{
-			TerrainField field = RealEarth.terrain();
-			int px = (int) field.projection().blockX(48.8610, 2.3420) >> 4;
-			int pz = (int) field.projection().blockZ(48.8610) >> 4;
-			int worst = 0;
-			String worstAt = "";
-			for (int cx = px - 8; cx <= px + 8; cx++) {
-				for (int cz = pz - 8; cz <= pz + 8; cz++) {
-					ChunkTerrain c;
-					try {
-						c = field.chunkBlocking(cx, cz, 120);
-					} catch (Exception e) {
-						continue;
-					}
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							int k = ChunkTerrain.index(x, z);
-							if (c.building[k] != 0) {
-								int tall = c.roofY[k] - c.topSolidY[k];
-								if (tall > worst) {
-									worst = tall;
+				// Buildings as the map colours them, and towers on their roofs.
+				{
+					int coloured = 0;
+					int matched = 0;
+					int towers = 0;
+					int standing = 0;
+					java.util.Map<String, Integer> walls = new java.util.TreeMap<>();
+					java.util.Set<Long> seen = new java.util.HashSet<>();
+					for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+						for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							if (c == null) {
+								continue;
+							}
+							LevelChunk chunk = earth.getChunk(cx, cz);
+							for (int x = 0; x < 16; x++) {
+								for (int z = 0; z < 16; z++) {
+									int k = ChunkTerrain.index(x, z);
+									if (c.building[k] == 0) {
+										continue;
+									}
 									var plan = c.plans.get(c.building[k] - 1);
-									worstAt = String.format(Locale.ROOT, "chunk %d,%d: roof Y %d over ground Y %d, floor Y %d, %d floors x %d, rise %d",
-										cx, cz, c.roofY[k], c.topSolidY[k], plan.floorY, plan.floors, plan.storey, plan.roofRise);
+									int wx = cx * 16 + x;
+									int wz = cz * 16 + z;
+									var tower = plan.towerAt(wx, wz);
+									if (tower != null && seen.add(plan.id * 31 + tower.topY())) {
+										towers++;
+										if (!chunk.getBlockState(new BlockPos(x, tower.topY() - tower.capRise(), z)).isAir()) {
+											standing++;
+										}
+									}
+									net.minecraft.world.level.block.Block wall = se.itssimple.realearth.world.Facades.wall(plan.colour);
+									if (wall == null || !seen.add(plan.id)) {
+										continue;
+									}
+									coloured++;
+									walls.merge(wall.getDescriptionId().replace("block.minecraft.", ""), 1, Integer::sum);
+									// Its wall block somewhere in its outer wall, a storey up.
+									boolean found = false;
+									for (int i = 0; i < 16 && !found; i++) {
+										for (int j = 0; j < 16 && !found; j++) {
+											int kk = ChunkTerrain.index(i, j);
+											if (c.building[kk] != 0 && c.plans.get(c.building[kk] - 1).id == plan.id) {
+												for (int dy = 1; dy <= plan.storey && !found; dy++) {
+													found = chunk.getBlockState(new BlockPos(i, plan.floorY + plan.storey + dy, j)).is(wall);
+												}
+											}
+										}
+									}
+									if (found) {
+										matched++;
+									}
+								}
+							}
+						}
+					}
+					log("map colours in 13 x 13 chunks of Stockholm: %d coloured buildings (%d built in their colour's block), walls %s; %d towers, %d standing",
+						coloured, matched, walls, towers, standing);
+					check(coloured >= 3 && matched * 10 >= coloured * 8, "buildings are built in their colours from the map (%d of %d)", matched, coloured);
+					check(towers >= 1 && standing == towers, "towers stand on the roofs of their buildings (%d of %d)", standing, towers);
+				}
+
+				// Roofs as mapped: OpenStreetMap's 3D tags from the Overture buildings tiles.
+				{
+					var detail = field.map() == null ? null : field.map().detail();
+					int shapes = -1;
+					try {
+						shapes = detail == null ? -1 : detail.tile(9014, 4818).get(120, java.util.concurrent.TimeUnit.SECONDS).shapes().size();
+					} catch (Exception e) {
+						log("building detail: %s", e);
+					}
+					java.util.Map<String, Integer> roofs = new java.util.TreeMap<>();
+					java.util.Map<String, Integer> caps = new java.util.TreeMap<>();
+					java.util.Set<Long> seenPlans = new java.util.HashSet<>();
+					// Over all of the city planned so far (the centre's blocks are mostly offices, roofs unmapped).
+					for (int cx = bestCx - 40; cx <= bestCx + 40; cx++) {
+						for (int cz = bestCz - 40; cz <= bestCz + 40; cz++) {
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							for (var plan : c == null ? List.<se.itssimple.realearth.terrain.BuildingPlan>of() : c.plans) {
+								if (seenPlans.add(plan.id)) {
+									roofs.merge(plan.roof.name(), 1, Integer::sum);
+									plan.towers.forEach(t -> caps.merge(t.roof().name(), 1, Integer::sum));
+								}
+							}
+						}
+					}
+					log("building detail: %d shapes in central Stockholm's tile; of %d buildings planned round it, roofs %s; tower caps %s", shapes, seenPlans.size(), roofs, caps);
+					int mapped = roofs.entrySet().stream().filter(e -> !e.getKey().equals("NONE")).mapToInt(java.util.Map.Entry::getValue).sum();
+					check(shapes > 100 && seenPlans.size() >= 30 && mapped * 20 >= seenPlans.size(), "buildings take their roofs as mapped (%d shapes in the tile, %d of %d buildings)",
+						shapes, mapped, seenPlans.size());
+				}
+
+				// Street life: the map's furniture where it is mapped, and parks with benches and fountains.
+				{
+					java.util.Map<String, Integer> life = new java.util.TreeMap<>();
+					int parkColumns = 0;
+					for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+						for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							if (c == null) {
+								continue;
+							}
+							LevelChunk chunk = earth.getChunk(cx, cz);
+							for (int x = 0; x < 16; x++) {
+								for (int z = 0; z < 16; z++) {
+									int k = ChunkTerrain.index(x, z);
+									if (c.building[k] != 0) {
+										continue;
+									}
+									parkColumns += c.park[k] ? 1 : 0;
+									if (c.grounds[k] != 0) {
+										life.merge(switch (c.grounds[k]) {
+											case ChunkTerrain.CEMETERY -> "cemetery columns";
+											case ChunkTerrain.ALLOTMENT -> "allotment columns";
+											case ChunkTerrain.FLOWERBED -> "flower bed columns";
+											default -> "pitch columns";
+										}, 1, Integer::sum);
+									}
+									if (c.park[k] && c.way[k] == se.itssimple.realearth.osm.Ways.NONE) {
+										boolean path = false;
+										for (int[] d : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+											path |= c.way[ChunkTerrain.index(x + d[0], z + d[1])] != se.itssimple.realearth.osm.Ways.NONE;
+										}
+										if (path) {
+											life.merge("park edges by paths", 1, Integer::sum);
+										}
+									}
+									int ground = c.topSolidY[k];
+									for (int y = ground + 1; y <= ground + 3; y++) {
+										var state = chunk.getBlockState(new BlockPos(x, y, z));
+										String what = state.is(Blocks.CAULDRON) ? "bins" : state.is(Blocks.WATER_CAULDRON) ? "drinking water"
+											: state.is(Blocks.WAXED_OXIDIZED_CHISELED_COPPER) ? "statues" : state.is(Blocks.CHISELED_QUARTZ_BLOCK) ? "monuments"
+											: state.is(Blocks.SPRUCE_STAIRS) ? "benches" : state.is(Blocks.STONE_BRICK_WALL) ? "fountain columns"
+											: state.is(Blocks.OAK_PRESSURE_PLATE) ? "picnic tables" : c.park[k] && state.is(Blocks.LANTERN) ? "park lamps"
+											: c.park[k] && state.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS) ? "park flowers"
+											: c.grounds[k] == ChunkTerrain.CEMETERY && (state.is(Blocks.STONE_BRICK_WALL) || state.is(Blocks.MOSSY_STONE_BRICK_WALL)
+												|| state.is(Blocks.ANDESITE_WALL) || state.is(Blocks.CHISELED_STONE_BRICKS)) ? "headstones"
+											: c.grounds[k] == ChunkTerrain.ALLOTMENT && state.is(net.minecraft.tags.BlockTags.CROPS) ? "crops"
+											: c.grounds[k] == ChunkTerrain.FLOWERBED && state.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS) ? "bedded flowers" : null;
+										if (what != null) {
+											life.merge(what, 1, Integer::sum);
+										}
+									}
+								}
+							}
+						}
+					}
+					log("street life in 13 x 13 chunks of Stockholm: %s; %d park columns", life, parkColumns);
+					// A harbour from central Stockholm's map tile; its chunk generated, with its boats.
+					try {
+						for (var poi : field.map().tile(9014, 4818).get(60, java.util.concurrent.TimeUnit.SECONDS).pois()) {
+							if (java.util.Set.of("marina", "dock", "ferry_terminal").contains(poi.subclass())) {
+								double lat = se.itssimple.realearth.geo.Mercator.latitudeOfSampleY(poi.y());
+								double lon = (poi.x() + 0.5) / se.itssimple.realearth.geo.Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0;
+								int bx = (int) Math.floor(field.projection().blockX(lat, lon));
+								int bz = (int) Math.floor(field.projection().blockZ(lat));
+								earth.getChunk(bx >> 4, bz >> 4);
+								ChunkTerrain c = field.chunkIfReady(bx >> 4, bz >> 4);
+								if (c != null && c.pois.stream().anyMatch(q -> poi.subclass().equals(q.subclass()))) {
+									harbourAt = new int[] {bx >> 4, bz >> 4};
+									log("harbour: %s %s at %d,%d", poi.subclass(), poi.name(), bx, bz);
+									break;
+								}
+							}
+						}
+					} catch (Exception e) {
+						log("harbour: %s", e);
+					}
+					check(life.getOrDefault("bins", 0) >= 1 && life.getOrDefault("benches", 0) >= 3 && parkColumns > 200,
+						"streets and parks have their furniture (%s)", life);
+					check((life.getOrDefault("cemetery columns", 0) < 50 || life.getOrDefault("headstones", 0) > 0)
+						&& (life.getOrDefault("allotment columns", 0) < 50 || life.getOrDefault("crops", 0) > 0)
+						&& (life.getOrDefault("flower bed columns", 0) < 20 || life.getOrDefault("bedded flowers", 0) > 0),
+						"cemeteries have headstones, allotments crops, flower beds flowers (%s)", life);
+				}
+
+				// No lava lakes in the parks: in town, lava at the ground was made a pond.
+				{
+					int lava = 0;
+					for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+						for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							if (c == null) {
+								continue;
+							}
+							LevelChunk chunk = earth.getChunk(cx, cz);
+							for (int x = 0; x < 16; x++) {
+								for (int z = 0; z < 16; z++) {
+									int ground = c.topSolidY[ChunkTerrain.index(x, z)];
+									for (int y = ground - 6; y <= ground + 4; y++) {
+										if (chunk.getFluidState(new BlockPos(x, y, z)).is(net.minecraft.tags.FluidTags.LAVA)) {
+											lava++;
+										}
+									}
+								}
+							}
+						}
+					}
+					check(lava == 0, "no lava at the ground in the city (%d blocks)", lava);
+				}
+
+				// Names on signs: over shop and hall doors, and on posts at street corners.
+				{
+					int streetSigns = 0;
+					int doorSigns = 0;
+					List<String> seen = new ArrayList<>();
+					for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+						for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+							for (var be : earth.getChunk(cx, cz).getBlockEntities().values()) {
+								if (!(be instanceof net.minecraft.world.level.block.entity.SignBlockEntity sign)) {
+									continue;
+								}
+								StringBuilder text = new StringBuilder();
+								for (var line : sign.getFrontText().getMessages(false)) {
+									if (!line.getString().isEmpty()) {
+										text.append(text.length() > 0 ? " " : "").append(line.getString());
+									}
+								}
+								if (text.length() == 0) {
+									continue;
+								}
+								boolean wall = sign.getBlockState().getBlock() instanceof net.minecraft.world.level.block.WallSignBlock;
+								if (wall) {
+									doorSigns++;
+								} else {
+									streetSigns++;
+								}
+								if (seen.size() < 8) {
+									seen.add((wall ? "door: " : "street: ") + text);
+								}
+							}
+						}
+					}
+					log("signs in 13 x 13 chunks of Stockholm: %d street name posts, %d over doors; e.g. %s", streetSigns, doorSigns, seen);
+					check(streetSigns >= 10 && doorSigns >= 1, "streets and shops have their names on signs (%d streets, %d doors)", streetSigns, doorSigns);
+				}
+
+				// Nothing floats: every block in the buildings touches another, and what needs a floor has one.
+				{
+					int floating = 0;
+					int unsupported = 0;
+					int skyDoors = 0;
+					for (int cx = bestCx - 1; cx <= bestCx + 1; cx++) {
+						for (int cz = bestCz - 1; cz <= bestCz + 1; cz++) {
+							LevelChunk chunk = earth.getChunk(cx, cz);
+							ChunkTerrain c = field.chunkIfReady(cx, cz);
+							if (c == null) {
+								continue;
+							}
+							for (int x = 0; x < 16; x++) {
+								for (int z = 0; z < 16; z++) {
+									int k = ChunkTerrain.index(x, z);
+									if (c.building[k] == 0) {
+										continue;
+									}
+									var plan = c.plans.get(c.building[k] - 1);
+									for (int y = plan.floorY + 1; y <= plan.roofBaseY() + plan.roofRise + 1; y++) {
+										BlockPos at = new BlockPos(cx * 16 + x, y, cz * 16 + z);
+										BlockState s = earth.getBlockState(at);
+										if (s.isAir()) {
+											continue;
+										}
+										// Stray: nothing at all in the 3 x 3 x 3 round it. (A stepped roof's blocks touch at
+										// their edges only, as every stair roof does, and look whole.)
+										boolean alone = true;
+										for (int dx = -1; dx <= 1 && alone; dx++) {
+											for (int dy = -1; dy <= 1 && alone; dy++) {
+												for (int dz = -1; dz <= 1 && alone; dz++) {
+													alone = dx == 0 && dy == 0 && dz == 0 || earth.getBlockState(at.offset(dx, dy, dz)).isAir();
+												}
+											}
+										}
+										if (alone) {
+											if (floating++ < 5) {
+												StringBuilder around = new StringBuilder();
+												for (int d = 0; d < 4; d++) {
+													int nx = x + (d == 1 ? 1 : d == 3 ? -1 : 0);
+													int nz = z + (d == 2 ? 1 : d == 0 ? -1 : 0);
+													int nk = ChunkTerrain.index(nx, nz);
+													around.append(" ").append(c.building[nk]).append("/").append(c.building[nk] == 0 ? "-" : String.valueOf(c.roofY[nk]));
+												}
+												log("  floating %s at %d,%d,%d: building %d (roof Y %d, %s, %d floors from Y %d); neighbours' buildings/roof Y:%s",
+													s.getBlock().getDescriptionId(), at.getX(), at.getY(), at.getZ(), c.building[k], c.roofY[k], plan.use, plan.floors, plan.floorY, around);
+											}
+										}
+										Block b = s.getBlock();
+										// A door in an outer wall above the ground floor opens onto a fall.
+										if (b instanceof net.minecraft.world.level.block.DoorBlock && y > plan.floorY + 3) {
+											boolean outer = false;
+											for (Direction d : Direction.Plane.HORIZONTAL) {
+												int nk = ChunkTerrain.index(x + d.getStepX(), z + d.getStepZ());
+												outer |= c.building[nk] != c.building[k];
+											}
+											if (outer && skyDoors++ < 3) {
+												log("  door to nowhere at %d,%d,%d", at.getX(), at.getY(), at.getZ());
+											}
+										}
+										boolean needsFloor = b instanceof net.minecraft.world.level.block.CarpetBlock || b instanceof net.minecraft.world.level.block.PressurePlateBlock
+											|| b instanceof net.minecraft.world.level.block.FlowerPotBlock || b instanceof net.minecraft.world.level.block.BedBlock;
+										if (needsFloor && earth.getBlockState(at.below()).isAir()) {
+											if (unsupported++ < 5) {
+												log("  unsupported %s at %d,%d,%d", b.getDescriptionId(), at.getX(), at.getY(), at.getZ());
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					log("in 3 x 3 chunks of buildings: %d floating blocks, %d with nothing under them, %d door blocks in outer walls above the ground floor",
+						floating, unsupported, skyDoors);
+					check(floating == 0 && unsupported == 0, "nothing in the buildings floats (%d floating, %d unsupported)", floating, unsupported);
+					check(skyDoors == 0, "street doors are on the ground floor only (%d higher up)", skyDoors);
+				}
+
+				// Every room of a block of flats can be walked to: in at a street door, through the doors,
+				// up the stairs, on every floor.
+				{
+					int buildings = 0;
+					int reached = 0;
+					int total = 0;
+					// The same buildings every run: all candidates in 13 x 13 chunks, in a fixed order.
+					java.util.Map<Long, se.itssimple.realearth.terrain.BuildingPlan> candidates = new java.util.TreeMap<>();
+					for (int cx = bestCx - 6; cx <= bestCx + 6; cx++) {
+						for (int cz = bestCz - 6; cz <= bestCz + 6; cz++) {
+							ChunkTerrain c;
+							try {
+								c = field.chunkBlocking(cx, cz, 120);
+							} catch (Exception e) {
+								continue;
+							}
+							for (var plan : c.plans) {
+								if (plan.floors >= 3 && (plan.use == se.itssimple.realearth.terrain.BuildingPlan.Use.FLATS
+									|| plan.use == se.itssimple.realearth.terrain.BuildingPlan.Use.OFFICES)
+									&& plan.maxX - plan.minX <= 48 && plan.maxZ - plan.minZ <= 48) {
+									candidates.put(plan.id, plan);
+								}
+							}
+						}
+					}
+					for (var plan : candidates.values()) {
+						if (buildings >= 12) {
+							break;
+						}
+						// Only a building that stands on its whole footprint: where mapped buildings overlap,
+						// a column is the first one's, and the other is built in part or not at all.
+						int mine = 0;
+						int area = 0;
+						for (int x = (int) Math.floor(plan.minX); x <= (int) Math.ceil(plan.maxX); x++) {
+							for (int z = (int) Math.floor(plan.minZ); z <= (int) Math.ceil(plan.maxZ); z++) {
+								if (!plan.contains(x, z)) {
+									continue;
+								}
+								area++;
+								ChunkTerrain c = field.chunkIfReady(x >> 4, z >> 4);
+								int k = ChunkTerrain.index(x & 15, z & 15);
+								if (c != null && c.building[k] != 0 && c.plans.get(c.building[k] - 1).id == plan.id) {
+									mine++;
+								}
+							}
+						}
+						if (mine < area * 0.98) {
+							continue;
+						}
+						int[] walk = walkRooms(earth, plan);
+						buildings++;
+						reached += walk[0];
+						total += walk[1];
+						log("  %d-storey %s at %d,%d: %d of %d rooms reached (%d stairwells, %d doors)", plan.floors, plan.use, (int) plan.minX, (int) plan.minZ,
+							walk[0], walk[1], plan.interior().stairs.size(), plan.interior().doors.size());
+					}
+					log("rooms reached in %d blocks of flats and offices: %d of %d", buildings, reached, total);
+					check(buildings >= 2 && reached == total, "every room of the flats and offices can be walked to (%d of %d)", reached, total);
+				}
+				var villagers = earth.getEntities(net.minecraft.world.entity.EntityType.VILLAGER,
+					new net.minecraft.world.phys.AABB((bestCx - 2) * 16, VerticalScale.MIN_Y, (bestCz - 2) * 16, (bestCx + 3) * 16, VerticalScale.MAX_Y, (bestCz + 3) * 16),
+					e -> true);
+				log("villagers in 5 x 5 chunks of buildings: %d", villagers.size());
+			}
+		}));
+
+		phases.add(Map.entry("Fagersjö", () -> {
+			// Fagersjö: the map merges a tile's buildings of one height into one feature; each must still be
+			// planned on its own, standing on its own ground.
+			{
+				TerrainField field = RealEarth.terrain();
+				int mx = (int) Math.floor(Mercator.sampleX(18.0623) / (Mercator.TILE_SIZE * 2));
+				int my = (int) Math.floor(Mercator.sampleY(59.2465) / (Mercator.TILE_SIZE * 2));
+				int count = field.map().tile(mx, my).join().buildings().size();
+				check(count > 200, "merged map buildings are split into single buildings: %d in Fagersjö's tile", count);
+				int fx = (int) field.projection().blockX(59.2465, 18.0623) >> 4;
+				int fz = (int) field.projection().blockZ(59.2465) >> 4;
+				int columns = 0;
+				int high = 0;
+				int worst = 0;
+				for (int cx = fx - 8; cx <= fx + 8; cx++) {
+					for (int cz = fz - 8; cz <= fz + 8; cz++) {
+						ChunkTerrain c;
+						try {
+							c = field.chunkBlocking(cx, cz, 120);
+						} catch (Exception e) {
+							continue;
+						}
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.building[k] != 0) {
+									int lift = c.plans.get(c.building[k] - 1).floorY - c.topSolidY[k];
+									columns++;
+									worst = Math.max(worst, Math.abs(lift));
+									if (Math.abs(lift) > 6) {
+										high++;
+									}
 								}
 							}
 						}
 					}
 				}
+				log("Fagersjö: %d building columns, %d more than 6 blocks off their ground, worst %d", columns, high, worst);
+				check(columns > 1000 && high < columns / 10, "buildings stand on their own ground: %d of %d columns more than 6 blocks off", high, columns);
 			}
-			log("tallest building column in central Paris: %d blocks (%s)", worst, worstAt);
-			check(worst <= RealEarth.config().maxFloors * 6 + 20, "Paris buildings stay within %d storeys", RealEarth.config().maxFloors);
-			try {
-				var lod = new se.itssimple.realearth.lod.LodSampler(field).patch(px * 16 - 128, pz * 16 - 128, 64, 4);
-				int lodMax = Integer.MIN_VALUE;
-				for (var col : lod) {
-					lodMax = Math.max(lodMax, col.groundTop());
-				}
-				log("distant terrain over central Paris: highest column Y %d", lodMax);
-				check(lodMax < VerticalScale.SEA_LEVEL_Y + 300, "distant Paris has no towering columns (highest Y %d)", lodMax);
-			} catch (Exception e) {
-				check(false, "distant Paris: %s", e);
-			}
-		}
+		}));
 
-		// Dry country: the Grand Canyon's walls are banded terracotta and its floor red earth, not grass.
-		{
-			TerrainField field = RealEarth.terrain();
-			int gx = (int) field.projection().blockX(36.0870, -112.1150) >> 4;
-			int gz = (int) field.projection().blockZ(36.0870) >> 4;
-			java.util.Map<String, Integer> tops = new java.util.TreeMap<>();
-			int desertTops = 0;
-			int banded = 0;
-			int all = 0;
-			for (int cx = gx - 4; cx <= gx + 4; cx++) {
-				for (int cz = gz - 4; cz <= gz + 4; cz++) {
-					LevelChunk c = earth.getChunk(cx, cz);
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							BlockState s = c.getBlockState(new BlockPos(x, c.getHeight(Heightmap.Types.OCEAN_FLOOR, x, z), z));
-							String name = s.getBlock().getDescriptionId().replace("block.minecraft.", "");
-							tops.merge(name, 1, Integer::sum);
-							all++;
-							if (name.contains("terracotta") || name.contains("red_sand") || name.equals("coarse_dirt")) {
-								desertTops++;
-							}
-							if (name.contains("terracotta")) {
-								banded++;
+		phases.add(Map.entry("Paris", () -> {
+			// Paris: no building stands taller than its storeys allow, in chunks or in distant terrain.
+			{
+				TerrainField field = RealEarth.terrain();
+				int px = (int) field.projection().blockX(48.8610, 2.3420) >> 4;
+				int pz = (int) field.projection().blockZ(48.8610) >> 4;
+				int worst = 0;
+				String worstAt = "";
+				for (int cx = px - 8; cx <= px + 8; cx++) {
+					for (int cz = pz - 8; cz <= pz + 8; cz++) {
+						ChunkTerrain c;
+						try {
+							c = field.chunkBlocking(cx, cz, 120);
+						} catch (Exception e) {
+							continue;
+						}
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.building[k] != 0) {
+									int tall = c.roofY[k] - c.topSolidY[k];
+									if (tall > worst) {
+										worst = tall;
+										var plan = c.plans.get(c.building[k] - 1);
+										worstAt = String.format(Locale.ROOT, "chunk %d,%d: roof Y %d over ground Y %d, floor Y %d, %d floors x %d, rise %d",
+											cx, cz, c.roofY[k], c.topSolidY[k], plan.floorY, plan.floors, plan.storey, plan.roofRise);
+									}
+								}
 							}
 						}
 					}
 				}
+				log("tallest building column in central Paris: %d blocks (%s)", worst, worstAt);
+				check(worst <= RealEarth.config().maxFloors * 6 + 20, "Paris buildings stay within %d storeys", RealEarth.config().maxFloors);
+				try {
+					var lod = new se.itssimple.realearth.lod.LodSampler(field).patch(px * 16 - 128, pz * 16 - 128, 64, 4);
+					int lodMax = Integer.MIN_VALUE;
+					for (var col : lod) {
+						lodMax = Math.max(lodMax, col.groundTop());
+					}
+					log("distant terrain over central Paris: highest column Y %d", lodMax);
+					check(lodMax < VerticalScale.SEA_LEVEL_Y + 300, "distant Paris has no towering columns (highest Y %d)", lodMax);
+				} catch (Exception e) {
+					check(false, "distant Paris: %s", e);
+				}
 			}
-			int climate = se.itssimple.realearth.climate.Koppen.get().classAt(36.087, -112.115);
-			log("Grand Canyon surface (%s): %s", se.itssimple.realearth.climate.Koppen.code(climate), tops);
-			check(desertTops > all / 2 && banded > all / 20, "Grand Canyon is red rock and earth (%d of %d columns, %d banded)", desertTops, all, banded);
-		}
+		}));
 
-		int ox = startCx * 16 + 8;
-		int oz = startCz * 16 + 8;
-		LevelChunk chunk = earth.getChunk(startCx, startCz);
-		int surface = RealEarth.surfaceY(earth, Heightmap.Types.WORLD_SURFACE, ox, oz);
-		int floor = RealEarth.surfaceY(earth, Heightmap.Types.OCEAN_FLOOR, ox, oz);
-		BlockState top = earth.getBlockState(new BlockPos(ox, floor - 1, oz));
-		check(surface > VerticalScale.SEA_LEVEL_Y - 200 && surface < VerticalScale.SEA_LEVEL_Y + 200,
-			"start surface Y %d (%.0f m), floor block %s, biome %s", surface,
-			RealEarth.terrain().toElevation(surface, RealEarth.terrain().projection().latitudeAt(oz)),
-			top, earth.getBiome(new BlockPos(ox, surface, oz)).unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
-		int deepSections = 0;
-		for (var section : chunk.getSections()) {
-			if (section.getStates().get(0, 0, 0).is(Blocks.DEEPSLATE) && section.maybeHas(s -> !s.is(Blocks.DEEPSLATE)) == false) {
-				deepSections++;
+		phases.add(Map.entry("Dry country", () -> {
+			// Dry country: the Grand Canyon's walls are banded terracotta and its floor red earth, not grass.
+			{
+				TerrainField field = RealEarth.terrain();
+				int gx = (int) field.projection().blockX(36.0870, -112.1150) >> 4;
+				int gz = (int) field.projection().blockZ(36.0870) >> 4;
+				java.util.Map<String, Integer> tops = new java.util.TreeMap<>();
+				int desertTops = 0;
+				int banded = 0;
+				int all = 0;
+				for (int cx = gx - 4; cx <= gx + 4; cx++) {
+					for (int cz = gz - 4; cz <= gz + 4; cz++) {
+						LevelChunk c = earth.getChunk(cx, cz);
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								BlockState s = c.getBlockState(new BlockPos(x, c.getHeight(Heightmap.Types.OCEAN_FLOOR, x, z), z));
+								String name = s.getBlock().getDescriptionId().replace("block.minecraft.", "");
+								tops.merge(name, 1, Integer::sum);
+								all++;
+								if (name.contains("terracotta") || name.contains("red_sand") || name.equals("coarse_dirt")) {
+									desertTops++;
+								}
+								if (name.contains("terracotta")) {
+									banded++;
+								}
+							}
+						}
+					}
+				}
+				int climate = se.itssimple.realearth.climate.Koppen.get().classAt(36.087, -112.115);
+				log("Grand Canyon surface (%s): %s", se.itssimple.realearth.climate.Koppen.code(climate), tops);
+				check(desertTops > all / 2 && banded > all / 20, "Grand Canyon is red rock and earth (%d of %d columns, %d banded)", desertTops, all, banded);
 			}
-		}
-		log("start chunk: %d sections are uniform deepslate (stored as single values)", deepSections);
-		check(earth.getBlockState(new BlockPos(ox, VerticalScale.MIN_Y, oz)).is(Blocks.BEDROCK), "bedrock at the bottom of the world");
 
-		if (RealEarth.earthIsOverworld(server)) {
-			Entity probe = EntityType.ARMOR_STAND.create(earth, EntitySpawnReason.COMMAND);
-			check(PortalTravel.destination(earth, probe, BlockPos.ZERO) == null, "Earth world type: portals lead nowhere");
-			BlockPos spawn = earth.getRespawnData().globalPos().pos();
-			check(spawn.getY() > VerticalScale.SEA_LEVEL_Y - 40, "Earth world type: spawn on the ground at Y %d", spawn.getY());
-			check(Math.abs(spawn.getX() - ox) < 200 && Math.abs(spawn.getZ() - oz) < 200,
-				"Earth world type: spawn at the start point (%d, %d; start %d, %d)", spawn.getX(), spawn.getZ(), ox, oz);
-			return;
-		}
-
-		// Portal: build a lapis frame in the Overworld, light it, send an entity through, and back.
-		ServerLevel overworld = server.overworld();
-		BlockPos base = new BlockPos(100, RealEarth.surfaceY(overworld, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, 100, 100) + 5, 100);
-		for (int w = -1; w <= 2; w++) {
-			for (int h = -1; h <= 3; h++) {
-				boolean edge = w == -1 || w == 2 || h == -1 || h == 3;
-				overworld.setBlock(base.east(w).above(h), edge ? Blocks.LAPIS_BLOCK.defaultBlockState() : Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+			int ox = startCx * 16 + 8;
+			int oz = startCz * 16 + 8;
+			LevelChunk chunk = earth.getChunk(startCx, startCz);
+			int surface = RealEarth.surfaceY(earth, Heightmap.Types.WORLD_SURFACE, ox, oz);
+			int floor = RealEarth.surfaceY(earth, Heightmap.Types.OCEAN_FLOOR, ox, oz);
+			BlockState top = earth.getBlockState(new BlockPos(ox, floor - 1, oz));
+			check(surface > VerticalScale.SEA_LEVEL_Y - 200 && surface < VerticalScale.SEA_LEVEL_Y + 200,
+				"start surface Y %d (%.0f m), floor block %s, biome %s", surface,
+				RealEarth.terrain().toElevation(surface, RealEarth.terrain().projection().latitudeAt(oz)),
+				top, earth.getBiome(new BlockPos(ox, surface, oz)).unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
+			int deepSections = 0;
+			for (var section : chunk.getSections()) {
+				if (section.getStates().get(0, 0, 0).is(Blocks.DEEPSLATE) && section.maybeHas(s -> !s.is(Blocks.DEEPSLATE)) == false) {
+					deepSections++;
+				}
 			}
-		}
-		Optional<PortalFrame.Rect> rect = PortalFrame.find(overworld, base.above(1));
-		check(rect.isPresent() && rect.get().width() == 2 && rect.get().height() == 3 && rect.get().axis() == Direction.Axis.X,
-			"lapis frame recognised: %s", rect);
-		rect.ifPresent(r -> PortalFrame.light(overworld, r));
-		check(overworld.getBlockState(base.above(2)).is(RealEarth.PORTAL), "frame lit");
+			log("start chunk: %d sections are uniform deepslate (stored as single values)", deepSections);
+			check(earth.getBlockState(new BlockPos(ox, VerticalScale.MIN_Y, oz)).is(Blocks.BEDROCK), "bedrock at the bottom of the world");
 
-		overworld.setBlock(base.east(-1).above(1), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
-		check(!overworld.getBlockState(base.above(2)).is(RealEarth.PORTAL), "portal collapses when its frame is broken");
-		overworld.setBlock(base.east(-1).above(1), Blocks.LAPIS_BLOCK.defaultBlockState(), Block.UPDATE_ALL);
-		PortalFrame.find(overworld, base).ifPresent(r -> PortalFrame.light(overworld, r));
+			if (RealEarth.earthIsOverworld(server)) {
+				Entity probe = EntityType.ARMOR_STAND.create(earth, EntitySpawnReason.COMMAND);
+				check(PortalTravel.destination(earth, probe, BlockPos.ZERO) == null, "Earth world type: portals lead nowhere");
+				BlockPos spawn = earth.getRespawnData().globalPos().pos();
+				check(spawn.getY() > VerticalScale.SEA_LEVEL_Y - 40, "Earth world type: spawn on the ground at Y %d", spawn.getY());
+				check(Math.abs(spawn.getX() - ox) < 200 && Math.abs(spawn.getZ() - oz) < 200,
+					"Earth world type: spawn at the start point (%d, %d; start %d, %d)", spawn.getX(), spawn.getZ(), ox, oz);
+				return;
+			}
+		}));
 
-		Entity traveller = EntityType.ARMOR_STAND.create(overworld, EntitySpawnReason.COMMAND);
-		traveller.setPos(base.getX() + 1.0, base.getY(), base.getZ() + 0.5);
-		overworld.addFreshEntity(traveller);
+		phases.add(Map.entry("Portal", () -> {
+			// Portal: build a lapis frame in the Overworld, light it, send an entity through, and back.
+			ServerLevel overworld = server.overworld();
+			BlockPos base = new BlockPos(100, RealEarth.surfaceY(overworld, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, 100, 100) + 5, 100);
+			for (int w = -1; w <= 2; w++) {
+				for (int h = -1; h <= 3; h++) {
+					boolean edge = w == -1 || w == 2 || h == -1 || h == 3;
+					overworld.setBlock(base.east(w).above(h), edge ? Blocks.LAPIS_BLOCK.defaultBlockState() : Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+				}
+			}
+			Optional<PortalFrame.Rect> rect = PortalFrame.find(overworld, base.above(1));
+			check(rect.isPresent() && rect.get().width() == 2 && rect.get().height() == 3 && rect.get().axis() == Direction.Axis.X,
+				"lapis frame recognised: %s", rect);
+			rect.ifPresent(r -> PortalFrame.light(overworld, r));
+			check(overworld.getBlockState(base.above(2)).is(RealEarth.PORTAL), "frame lit");
 
-		long t1 = System.nanoTime();
-		TeleportTransition there = PortalTravel.destination(overworld, traveller, base);
-		check(there != null && there.newLevel() == earth, "portal leads to Earth (%d ms)", (System.nanoTime() - t1) / 1_000_000);
-		if (there == null) {
-			return;
-		}
-		Entity arrived = traveller.teleport(there);
-		check(arrived != null && arrived.level() == earth, "entity arrived on Earth at %s", arrived == null ? null : arrived.blockPosition());
-		if (arrived == null) {
-			return;
-		}
-		BlockPos at = arrived.blockPosition();
-		check(earth.getBlockState(at).is(RealEarth.PORTAL), "a return portal stands at the arrival point");
-		double elevation = RealEarth.terrain().toElevation(at.getY(), RealEarth.terrain().projection().latitudeAt(at.getZ()));
-		check(Math.abs(at.getX() - (base.getX() + RealEarth.terrain().startX())) < 40 && Math.abs(at.getZ() - (base.getZ() + RealEarth.terrain().startZ())) < 40,
-			"portal leads to the same distance from Earth's start point");
-		log("arrived %.0f m above sea level at X %d Z %d", elevation, at.getX(), at.getZ());
+			overworld.setBlock(base.east(-1).above(1), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+			check(!overworld.getBlockState(base.above(2)).is(RealEarth.PORTAL), "portal collapses when its frame is broken");
+			overworld.setBlock(base.east(-1).above(1), Blocks.LAPIS_BLOCK.defaultBlockState(), Block.UPDATE_ALL);
+			PortalFrame.find(overworld, base).ifPresent(r -> PortalFrame.light(overworld, r));
 
-		// A portal into ground nobody has loaded yet must still land on the real surface.
-		Entity explorer = EntityType.ARMOR_STAND.create(overworld, EntitySpawnReason.COMMAND);
-		BlockPos far = new BlockPos(6000, 70, -4000);
-		TeleportTransition farTrip = PortalTravel.destination(overworld, explorer, far);
-		int farX = far.getX() + RealEarth.terrain().startX();
-		int farZ = far.getZ() + RealEarth.terrain().startZ();
-		ChunkTerrain farTerrain = RealEarth.terrain().chunkIfReady(farX >> 4, farZ >> 4);
-		int expected = farTerrain == null ? Integer.MIN_VALUE : farTerrain.topSolidY[ChunkTerrain.index(farX & 15, farZ & 15)];
-		check(farTrip != null && Math.abs(farTrip.position().y - expected) < 40,
-			"portal into unloaded terrain lands on the ground: Y %.0f, terrain top Y %d", farTrip == null ? Double.NaN : farTrip.position().y, expected);
+			Entity traveller = EntityType.ARMOR_STAND.create(overworld, EntitySpawnReason.COMMAND);
+			traveller.setPos(base.getX() + 1.0, base.getY(), base.getZ() + 0.5);
+			overworld.addFreshEntity(traveller);
 
-		TeleportTransition back = PortalTravel.destination(earth, arrived, at);
-		check(back != null && back.newLevel() == overworld && back.position().distanceTo(base.getCenter()) < 32,
-			"return portal leads back to the Overworld portal: %s", back == null ? null : back.position());
+			long t1 = System.nanoTime();
+			TeleportTransition there = PortalTravel.destination(overworld, traveller, base);
+			check(there != null && there.newLevel() == earth, "portal leads to Earth (%d ms)", (System.nanoTime() - t1) / 1_000_000);
+			if (there == null) {
+				return;
+			}
+			Entity arrived = traveller.teleport(there);
+			check(arrived != null && arrived.level() == earth, "entity arrived on Earth at %s", arrived == null ? null : arrived.blockPosition());
+			if (arrived == null) {
+				return;
+			}
+			BlockPos at = arrived.blockPosition();
+			check(earth.getBlockState(at).is(RealEarth.PORTAL), "a return portal stands at the arrival point");
+			double elevation = RealEarth.terrain().toElevation(at.getY(), RealEarth.terrain().projection().latitudeAt(at.getZ()));
+			check(Math.abs(at.getX() - (base.getX() + RealEarth.terrain().startX())) < 40 && Math.abs(at.getZ() - (base.getZ() + RealEarth.terrain().startZ())) < 40,
+				"portal leads to the same distance from Earth's start point");
+			log("arrived %.0f m above sea level at X %d Z %d", elevation, at.getX(), at.getZ());
+
+			// A portal into ground nobody has loaded yet must still land on the real surface.
+			Entity explorer = EntityType.ARMOR_STAND.create(overworld, EntitySpawnReason.COMMAND);
+			BlockPos far = new BlockPos(6000, 70, -4000);
+			TeleportTransition farTrip = PortalTravel.destination(overworld, explorer, far);
+			int farX = far.getX() + RealEarth.terrain().startX();
+			int farZ = far.getZ() + RealEarth.terrain().startZ();
+			ChunkTerrain farTerrain = RealEarth.terrain().chunkIfReady(farX >> 4, farZ >> 4);
+			int expected = farTerrain == null ? Integer.MIN_VALUE : farTerrain.topSolidY[ChunkTerrain.index(farX & 15, farZ & 15)];
+			check(farTrip != null && Math.abs(farTrip.position().y - expected) < 40,
+				"portal into unloaded terrain lands on the ground: Y %.0f, terrain top Y %d", farTrip == null ? Double.NaN : farTrip.position().y, expected);
+
+			TeleportTransition back = PortalTravel.destination(earth, arrived, at);
+			check(back != null && back.newLevel() == overworld && back.position().distanceTo(base.getCenter()) < 32,
+				"return portal leads back to the Overworld portal: %s", back == null ? null : back.position());
+		}));
+		return phases;
 	}
 }

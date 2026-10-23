@@ -123,6 +123,7 @@ public class RealEarth implements ModInitializer {
 		Registry.register(BuiltInRegistries.CHUNK_GENERATOR, id("earth"), EarthChunkGenerator.CODEC);
 		Registry.register(BuiltInRegistries.BIOME_SOURCE, id("earth"), EarthBiomeSource.CODEC);
 		Registry.register(BuiltInRegistries.STRUCTURE_PLACEMENT, id("built_up"), se.itssimple.realearth.world.BuiltUpPlacement.TYPE);
+		Registry.register(BuiltInRegistries.LOOT_FUNCTION_TYPE, id("town_map"), se.itssimple.realearth.world.TownMapFunction.CODEC);
 
 		ServerLifecycleEvents.SERVER_STARTING.register(RealEarth::start);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
