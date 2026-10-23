@@ -16,7 +16,8 @@ import xaero.lib.common.config.option.value.io.serialization.BuiltInConfigValueI
 /**
  * Xaero's Minimap: two lines under the minimap on the Earth, latitude, longitude and real elevation,
  * and the town and district. Each can be turned off, and moved, in the minimap's info display
- * settings like its own lines. Only loaded when the minimap is.
+ * settings like its own lines. And waypoints for the towns and stations round the player
+ * ({@link XaeroWaypoints}). Only loaded when the minimap is.
  */
 public final class XaeroMinimapCompat {
 	private static boolean added;
@@ -25,6 +26,7 @@ public final class XaeroMinimapCompat {
 	}
 
 	public static void install() {
+		XaeroWaypoints.install();
 		// The minimap sets itself up in its own initialiser, which may run after ours: add the lines once it has.
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (added) {

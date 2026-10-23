@@ -53,6 +53,19 @@ public sealed interface Projection permits Projection.Sinusoidal, Projection.Web
 		return 0;
 	}
 
+	/** Block x and z of a z15 map sample position, in the copy of the world nearest {@code nearX}. */
+	default double[] blockOfSample(double sx, double sy, double nearX) {
+		double lat = Mercator.latitudeOfSampleY(sy);
+		double lon = wrapLongitude((sx + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0);
+		double bx = blockX(lat, lon);
+		double bz = blockZ(lat);
+		double period = periodX();
+		if (period > 0) {
+			bx += Math.rint((nearX - bx) / period) * period;
+		}
+		return new double[] {bx, bz};
+	}
+
 	default double longitudeAt(double x, double latitude) {
 		return wrapLongitude(originLongitude() + longitudeOffsetAt(x, latitude));
 	}

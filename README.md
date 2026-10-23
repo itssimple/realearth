@@ -350,6 +350,7 @@ At one block per metre this is what makes mountains on the horizon visible at al
 | `useBuildingDetail` | true | Roof shapes, colours and building parts from the Overture Maps buildings tiles |
 | `buildingDetailUrl`, `buildingDetailRelease`, `buildingDetailCatalog` | Overture's S3, `latest`, Overture's STAC | Where those tiles are, and which monthly release |
 | `placeTitles` | true | Show a town's name on walking into it, and the district's above the hotbar |
+| `mapWaypoints` | true | Towns and stations round you as waypoints in Xaero's Minimap (read on the client) |
 | `storeyMeters`, `maxFloors` | 4.5, 10 | Height of a storey (at least 5 blocks) and most storeys per building |
 | `villagerChance` | 0.2 | Chance that a chunk with beds gets a villager (one); about one chunk of town in twenty |
 | `townsfolk` | 24 | Most villagers kept in the town round each player (one per four real beds there); 0 turns it off |
@@ -399,7 +400,11 @@ Planned features and known issues: see [ROADMAP.md](ROADMAP.md).
   it sells, the storey), the street, district and town, and the block's latitude, longitude and real elevation.
   Two toggles in Jade's plugin settings. Needs Jade on the server too (it is in singleplayer).
 - **Xaero's Minimap.** Two lines under the minimap: latitude, longitude and real elevation, and the district and
-  town. Turn them on, off or move them in the minimap's info display settings. Works on servers with Real Earth.
+  town. Turn them on, off or move them in the minimap's info display settings. And waypoints for the towns round
+  you (a capital in gold, cities yellow, towns white, villages grey, as far as their names reach) and the nearest
+  railway and metro stations within 3 km (aqua, "St"). They are kept apart from your own waypoints, never saved,
+  and follow you as you travel; `mapWaypoints: false` in the config turns them off. Works on servers with Real
+  Earth.
 - **Lootr** and **Distant Horizons**: see above.
 
 **For mod authors.** `se.itssimple.realearth.api` (compile against the Real Earth jar, `modCompileOnly`):

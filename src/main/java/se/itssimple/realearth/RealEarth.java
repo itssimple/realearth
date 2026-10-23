@@ -126,6 +126,7 @@ public class RealEarth implements ModInitializer {
 		Registry.register(BuiltInRegistries.LOOT_FUNCTION_TYPE, id("town_map"), se.itssimple.realearth.world.TownMapFunction.CODEC);
 
 		se.itssimple.realearth.world.HereLink.register();
+		se.itssimple.realearth.world.MapWaypoints.register();
 
 		ServerLifecycleEvents.SERVER_STARTING.register(RealEarth::start);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
@@ -153,6 +154,7 @@ public class RealEarth implements ModInitializer {
 				DegradedChunks.save();
 			}
 			se.itssimple.realearth.world.Places.tick(server);
+			se.itssimple.realearth.world.MapWaypoints.tick(server);
 			se.itssimple.realearth.world.Townsfolk.tick(server);
 			se.itssimple.realearth.world.Milestones.tick(server);
 			// Building detail for the map round each player, before chunks there need it.

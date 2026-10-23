@@ -40,8 +40,8 @@ Proposed features and known issues, roughly in the order they'd be worth doing. 
 7. **Villages that follow the streets**, where buildings aren't mapped: city villages are vanilla jigsaw villages
    on a grid; placing their houses along the real road network would fit better.
 8. **Working with other mods** (see `docs/INTEGRATION-PLAN.md`). Done: a small API (positions, place, street,
-   building, a TownEntered event), Jade and Xaero's Minimap lines. Next: town and station waypoints in Xaero's,
-   palette tags and a landmark structure hook, a BuildingGenerated event for interior mods.
+   building, a TownEntered event), Jade, and Xaero's Minimap lines and town and station waypoints. Next: palette
+   tags and a landmark structure hook, a BuildingGenerated event for interior mods.
 9. **Real places as advancements.** Done: towns, capitals, the equator, polar circles, prime meridian, date
    line, thin air, below the sea. Next: a country's highest point, visiting ten towns, every continent.
 

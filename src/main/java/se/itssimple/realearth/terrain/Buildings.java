@@ -243,15 +243,7 @@ final class Buildings {
 
 	/** World block position of a sample position, in the copy of the world nearest {@code nearX}. */
 	static double[] toBlock(Projection projection, double sx, double sy, double nearX) {
-		double lat = Mercator.latitudeOfSampleY(sy);
-		double lon = Projection.wrapLongitude((sx + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0);
-		double bx = projection.blockX(lat, lon);
-		double bz = projection.blockZ(lat);
-		double period = projection.periodX();
-		if (period > 0) {
-			bx += Math.rint((nearX - bx) / period) * period;
-		}
-		return new double[] {bx, bz};
+		return projection.blockOfSample(sx, sy, nearX);
 	}
 
 	/**

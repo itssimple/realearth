@@ -1558,6 +1558,36 @@ final class SelfTest {
 			}
 		}));
 
+		phases.add(Map.entry("Waypoints for the minimap", () -> {
+			// Waypoints for the minimap: the towns and stations round central Stockholm.
+			{
+				TerrainField field = RealEarth.terrain();
+				var at = se.itssimple.realearth.api.RealEarthApi.toBlock(earth, 59.3310, 18.0600).orElseThrow();
+				List<se.itssimple.realearth.world.MapWaypoints.Mark> marks = null;
+				for (int i = 0; i < 300; i++) {
+					marks = se.itssimple.realearth.world.MapWaypoints.around(field, at.x(), at.z());
+					if (marks != null && marks.stream().anyMatch(m -> m.kind() == se.itssimple.realearth.world.MapWaypoints.STATION)) {
+						break;
+					}
+					try {
+						Thread.sleep(200);
+					} catch (InterruptedException ex) {
+						Thread.currentThread().interrupt();
+					}
+				}
+				var got = marks == null ? List.<se.itssimple.realearth.world.MapWaypoints.Mark>of() : marks;
+				log("waypoints round central Stockholm: %s", got.stream().map(m -> m.kind() + " " + m.name()).toList());
+				var stockholm = got.stream().filter(m -> m.name().equals("Stockholm")).findFirst();
+				check(stockholm.isPresent() && stockholm.get().kind() == se.itssimple.realearth.world.MapWaypoints.CAPITAL,
+					"Stockholm is a capital's waypoint round its centre");
+				check(stockholm.isPresent() && Math.hypot(stockholm.get().x() - at.x(), stockholm.get().z() - at.z()) < 3000,
+					"Stockholm's waypoint is near its centre");
+				long stations = got.stream().filter(m -> m.kind() == se.itssimple.realearth.world.MapWaypoints.STATION).count();
+				long towns = got.size() - stations;
+				check(stations >= 2 && stations <= 8 && towns >= 3 && towns <= 12, "a few towns and stations are marked (%d towns, %d stations)", towns, stations);
+			}
+		}));
+
 		phases.add(Map.entry("Advancements for real places", () -> {
 			// Advancements for real places: all load, under one root.
 			{

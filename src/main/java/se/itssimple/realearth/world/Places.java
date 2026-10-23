@@ -33,7 +33,7 @@ import se.itssimple.realearth.terrain.TerrainField;
  */
 public final class Places {
 	/** Zoom of the tiles towns are read from. */
-	private static final int TOWN_ZOOM = 10;
+	static final int TOWN_ZOOM = 10;
 	/** Every this many ticks each player's place is looked at again. */
 	private static final int EVERY = 20;
 	/** A district's name reaches this far from its point, in metres; a neighbourhood's less far. */
@@ -107,6 +107,7 @@ public final class Places {
 	public static void clear() {
 		LAST.clear();
 		HereLink.clear();
+		MapWaypoints.clear();
 	}
 
 	/**
@@ -172,7 +173,7 @@ public final class Places {
 	}
 
 	/** The places in the 3 x 3 tiles round a sample position at a zoom, or null while any is still loading. */
-	private static List<OsmWater.Place> around(OsmWater map, int zoom, double sx, double sy) {
+	static List<OsmWater.Place> around(OsmWater map, int zoom, double sx, double sy) {
 		double per = (double) Mercator.TILE_SIZE * (1 << (Mercator.ZOOM - zoom));
 		int tx = (int) Math.floor(sx / per);
 		int ty = (int) Math.floor(sy / per);
