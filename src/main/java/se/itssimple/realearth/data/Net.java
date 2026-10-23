@@ -79,7 +79,8 @@ public final class Net {
 		if (host == null) {
 			return "other";
 		}
-		if (host.contains("elevation-tiles")) {
+		// The elevation tiles are an S3 bucket, named in the path: s3.amazonaws.com/elevation-tiles-prod/...
+		if (host.contains("elevation-tiles") || url.contains("/elevation-tiles")) {
 			return "elevation";
 		}
 		if (host.contains("openfreemap")) {
