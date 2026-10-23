@@ -3,7 +3,7 @@
   "id": "realearth",
   "version": "${version}",
   "name": "Real Earth",
-  "description": "The real Earth at one block per metre: real elevation, water, roads, railways, land cover and climate, as a dimension (a lapis frame lit with a Globe Banner Pattern) or a world type. Map data (c) OpenStreetMap contributors (ODbL); Terrain Tiles (USGS and others); (c) ESA WorldCover 2021 (CC BY 4.0); Koppen-Geiger, Beck et al. 2023 (CC BY 4.0). Full credits: CREDITS.md in the jar, or /earth credits.",
+  "description": "The real Earth at one block per metre: real elevation, water, roads, railways, towns with their buildings, land cover and climate, as a dimension (a lapis frame lit with a Globe Banner Pattern) or a world type. Map data (c) OpenStreetMap contributors (ODbL); building detail (c) Overture Maps Foundation (ODbL); Terrain Tiles (USGS and others); (c) ESA WorldCover 2021 (CC BY 4.0); Koppen-Geiger, Beck et al. 2023 (CC BY 4.0). Full credits: CREDITS.md in the jar, or /earth credits.",
   "authors": [
     "itssimple"
   ],

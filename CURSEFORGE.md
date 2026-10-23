@@ -15,14 +15,27 @@ Start in your own street, fly to the nearest town centre, or teleport anywhere o
 - **Real water**: seas, lakes, rivers, canals and streams from OpenStreetMap.
 - **Real land cover and climate**: forests, grassland, farmland, wetlands, deserts, snow and ice, with biomes and
   surfaces chosen by the real climate. Red banded rock in dry canyons, sandstone in deserts.
-- **Roads, paths and railways** with working rails, and bridges over water.
-- **Real buildings** on their real footprints, built as village-style houses in the style of the local climate:
-  storeys of at least 4.5 m (up to 10), windows, doors facing the street, ladders, pitched or flat roofs,
-  furniture, job blocks and villagers. Wells, farm plots, bells and street lamps between them.
+- **Roads, paths and railways**: bridges you can walk onto, railways you can ride (continuous, powered track,
+  through stations), and tunnels dug under the ground, stone-lined and lit.
+- **Real buildings** on their real footprints, in the colours, roof shapes and heights the map gives them, with
+  towers, spires and domes where they are mapped. Storeys of at least 4.5 m (up to 10).
+- **Buildings you can go into**: blocks of flats with stairwells and flats, shops in ground-floor units, halls
+  (churches, libraries, schools, markets), offices, warehouses and houses, every room furnished and reachable:
+  real beds, kitchens, bookshelves, shelves of stock, pews. Chests, pantries and shop stock carry loot tables
+  (Lootr-ready); bookshops sell maps of their own town. Signs name the shops, halls and streets.
+- **Towns that feel lived in**: the town and district you walk into on screen; villagers who live in the
+  buildings and come and go round you; benches, bins, bus stops, statues, market stalls, boats by the marinas and
+  minecarts at the stations, where the map has them; parks with fountains, cemeteries, allotments, pitches.
+- **Advancements for real places**: towns, capitals, the equator, the polar circles, the prime meridian, the date
+  line, thin air, below the sea.
 - **Vanilla underneath**: caves, ores at their usual depths, and all structures: villages where no buildings are
   mapped, mineshafts, ancient cities, ocean monuments and more.
 - **Distant Horizons support**: distant terrain is drawn straight from the data, so you can see mountains tens of
   kilometres away.
+- **Jade and Xaero's Minimap support**: the building, room, street, town, latitude and longitude of the block you
+  look at; latitude, longitude and town under the minimap, and waypoints for the towns and stations round you.
+- **An API** for other mods: positions both ways, the place, street and building at a block, and a town-entered
+  event.
 - **Works offline** for places already visited or downloaded in advance (`/earth download`), with a size-capped
   cache and a repair command for terrain generated while the data couldn't be downloaded.
 
@@ -39,7 +52,9 @@ Start in your own street, fly to the nearest town centre, or teleport anywhere o
 - `/earth where`: your real latitude, longitude and elevation, with a map link
 - `/earth tp <latitude> <longitude>`: go anywhere (operators)
 - `/earth download <radius>`: download an area for offline play (operators)
-- `/earth repair`, `/earth cache`, `/earth perf`: maintenance (operators)
+- `/earth repair`, `/earth cache`: maintenance (operators)
+- `/earth perf`, `/earth perf log <seconds>`: generation times, downloads and waits, and a running performance
+  log in `logs/realearth-perf.log` (operators)
 - `/earth credits`: the data sources
 
 ## Requirements
@@ -48,6 +63,7 @@ Start in your own street, fly to the nearest town centre, or teleport anywhere o
 - Install on **both client and server**
 - Recommended: **Distant Horizons** 3.3+ (at one block per metre, vanilla render distance shows only a few
   hundred metres)
+- Optional, supported when installed: **Jade**, **Xaero's Minimap**, **Lootr**
 - An **internet connection** the first time you visit a place (see below)
 
 ## Internet use and privacy
@@ -55,7 +71,9 @@ Start in your own street, fly to the nearest town centre, or teleport anywhere o
 Real Earth downloads public map data while you play, from these services only:
 
 - elevation tiles from the Terrain Tiles dataset on Amazon Web Services' open data registry,
-- map tiles (water, roads, railways, buildings) from OpenFreeMap,
+- map tiles (water, roads, railways, buildings, places) from OpenFreeMap,
+- building detail (roofs, colours, building parts) from the Overture Maps Foundation's buildings release on
+  Amazon S3, and its release catalogue,
 - land cover tiles from the European Space Agency's WorldCover dataset on Amazon S3.
 
 Only map tiles are requested; no information about you, your world or your computer is sent, and there is no
@@ -64,9 +82,11 @@ and reused, so places you have been work offline. The climate map is bundled.
 
 ## Good to know
 
-- Generation in big cities is about 1.5× the cost of countryside; first visits wait for downloads.
-- Buildings are village-style houses on real footprints, not replicas; interiors are open floors furnished along
-  the walls.
+- Generation in big cities costs more than countryside; first visits wait for downloads.
+- Buildings follow their real footprints, heights, roofs and colours, but are not replicas: walls, windows and
+  rooms are laid out by the mod, not taken from the real building.
+- Every bed is a real bed, so a city has many block entities; a culling mod such as Entity Culling may help frame
+  rates there.
 - Scale is exact only at the start latitude: places nearer the equator come out smaller, places nearer the poles
   larger.
 - The elevation data is coarse in places (central Stockholm is unusually flat, for example).
@@ -90,7 +110,8 @@ but treat it as the beta it is, and please report anything that looks wrong.
 
 ## Credits
 
-Map data © OpenStreetMap contributors (ODbL), served by OpenFreeMap (© OpenMapTiles). Elevation: Terrain Tiles
+Map data © OpenStreetMap contributors (ODbL), served by OpenFreeMap (© OpenMapTiles). Building detail: Overture
+Maps Foundation, buildings theme (ODbL), mostly from OpenStreetMap. Elevation: Terrain Tiles
 on AWS (Mapzen), from USGS, NOAA, Copernicus EU-DEM and national agencies. Land cover: © ESA WorldCover project
 2021, contains modified Copernicus Sentinel data (CC BY 4.0). Climate: Beck et al. (2023), Köppen-Geiger maps
 (CC BY 4.0). Full credits in CREDITS.md in the mod's jar, or in game with `/earth credits`.
