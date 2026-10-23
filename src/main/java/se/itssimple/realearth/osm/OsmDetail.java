@@ -74,6 +74,7 @@ public final class OsmDetail {
 			t.setDaemon(true);
 			return t;
 		});
+		se.itssimple.realearth.data.Net.pool("building detail", downloads);
 	}
 
 	/** The detail of a z14 map tile: from disk, else read from the archive and kept. */

@@ -165,7 +165,7 @@ The frame and activator are tags, so a datapack can change them: `realearth:port
 | `/earth cache` | Cache size per source, this session's downloads, network state, chunks waiting for repair |
 | `/earth cache clear` | Delete the whole download cache (permission level 4) |
 | `/earth credits` | Where Earth's data comes from, with links (everyone) |
-| `/earth perf [reset]` | Time spent in each stage of generating Earth, for finding what is slow |
+| `/earth perf [reset]` | Time spent in each stage of generating Earth; downloads by source (elevation, map, building detail, land cover: how many, MB, average and slowest, retries, rate limits, errors, in flight), how busy each download pool is, and how long chunks waited for each kind of data. For finding what is slow |
 
 `download`, `repair` and `cache` need permission level 2.
 
@@ -176,6 +176,10 @@ In the Earth dimension, F3 also shows latitude, longitude and elevation.
 Everything downloaded is kept in `realearth-cache/` in the game folder, shared by all worlds, so places you have
 been work without a connection. To play somewhere new offline, or to have a server ready before players
 arrive, run `/earth download 5000` there first.
+
+Each tile or byte range is downloaded once at a time: whatever else asks for it meanwhile waits for that
+download. Retries, rate limits (HTTP 429) and failures are logged once a minute when they happen, and
+`/earth perf` shows the counts.
 
 If new terrain is generated while the data can't be downloaded, Minecraft still needs a chunk, so it gets
 a placeholder: elevation from coarser tiles already on disk (or flat at sea level), water from elevation alone,

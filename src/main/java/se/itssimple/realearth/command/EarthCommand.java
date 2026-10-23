@@ -58,11 +58,20 @@ public final class EarthCommand {
 				.executes(ctx -> {
 					ctx.getSource().sendSuccess(() -> Component.literal("Generation time by stage, since start or reset (ms/runs): "
 						+ se.itssimple.realearth.Perf.report()), false);
+					ctx.getSource().sendSuccess(() -> Component.literal("Downloads and waits, since start or reset:").withStyle(ChatFormatting.GOLD), false);
+					List<String> lines = se.itssimple.realearth.data.Net.report();
+					if (lines.isEmpty()) {
+						ctx.getSource().sendSuccess(() -> Component.literal("  nothing downloaded or waited for yet"), false);
+					}
+					for (String line : lines) {
+						ctx.getSource().sendSuccess(() -> Component.literal("  " + line), false);
+					}
 					return 1;
 				})
 				.then(Commands.literal("reset").executes(ctx -> {
 					se.itssimple.realearth.Perf.reset();
-					ctx.getSource().sendSuccess(() -> Component.literal("Generation timers reset."), false);
+					se.itssimple.realearth.data.Net.reset();
+					ctx.getSource().sendSuccess(() -> Component.literal("Generation timers and download counts reset."), false);
 					return 1;
 				})))
 			.then(Commands.literal("credits").executes(ctx -> {

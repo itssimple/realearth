@@ -40,11 +40,20 @@ public final class Http {
 		}
 	}
 
-	/** GETs a URL, or a byte range of it when {@code length > 0}. */
+	/**
+	 * GETs a URL, or a byte range of it when {@code length > 0}. The same URL and range asked for again
+	 * while it is on its way waits for that download (see {@link Net#once}).
+	 */
 	public static byte[] get(String url, long offset, long length) throws IOException {
+		String source = Net.sourceOf(url);
 		if (System.currentTimeMillis() < OFFLINE_UNTIL.get()) {
+			Net.paused(source);
 			throw new IOException("network paused after recent failures");
 		}
+		return Net.once(url + "#" + offset + "+" + length, source, () -> fetch(url, offset, length, source));
+	}
+
+	private static byte[] fetch(String url, long offset, long length, String source) throws IOException {
 		HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
 			.timeout(Duration.ofSeconds(30))
 			.header("User-Agent", "RealEarth-Minecraft-Mod/" + RealEarth.VERSION)
@@ -64,9 +73,11 @@ public final class Http {
 					throw new IOException("interrupted");
 				}
 			}
+			long started = System.nanoTime();
 			try {
 				HttpResponse<byte[]> response = CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
 				int code = response.statusCode();
+				Net.attempt(source, code, System.nanoTime() - started, response.body() == null ? 0 : response.body().length);
 				if (code == 200 || code == 206) {
 					byte[] body = response.body();
 					boolean gzip = response.headers().firstValue("Content-Encoding").map("gzip"::equalsIgnoreCase).orElse(false)
@@ -80,12 +91,14 @@ public final class Http {
 			} catch (Missing m) {
 				throw m;
 			} catch (IOException e) {
+				Net.attempt(source, -1, System.nanoTime() - started, 0);
 				last = e;
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 				throw new IOException("interrupted");
 			}
 		}
+		Net.failed(source);
 		OFFLINE_UNTIL.set(System.currentTimeMillis() + OFFLINE_PAUSE_MS);
 		throw last;
 	}

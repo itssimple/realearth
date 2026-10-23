@@ -65,6 +65,7 @@ public final class TileStore implements AutoCloseable {
 			t.setDaemon(true);
 			return t;
 		});
+		Net.pool("elevation", downloads);
 		this.http = HttpClient.newBuilder()
 			.connectTimeout(Duration.ofSeconds(10))
 			.followRedirects(HttpClient.Redirect.NORMAL)
@@ -220,14 +221,27 @@ public final class TileStore implements AutoCloseable {
 			}
 		}
 
-		if (!allowNetwork || System.currentTimeMillis() < offlineUntil.get()) {
+		if (!allowNetwork) {
 			return new Fetch(Status.FAILED, null);
 		}
-
 		String url = urlTemplate
 			.replace("{z}", Integer.toString(z))
 			.replace("{x}", Integer.toString(x))
 			.replace("{y}", Integer.toString(y));
+		String source = Net.sourceOf(url);
+		if (System.currentTimeMillis() < offlineUntil.get()) {
+			Net.paused(source);
+			return new Fetch(Status.FAILED, null);
+		}
+		// One download per tile at a time: a second ask while it is on its way gets the same answer.
+		try {
+			return Net.once(url, source, () -> download(url, dir, file, missing, source));
+		} catch (IOException e) {
+			return new Fetch(Status.FAILED, null);
+		}
+	}
+
+	private Fetch download(String url, Path dir, Path file, Path missing, String source) {
 		HttpRequest request = HttpRequest.newBuilder(URI.create(url))
 			.timeout(Duration.ofSeconds(30))
 			.header("User-Agent", "RealEarth-Minecraft-Mod/" + RealEarth.VERSION)
@@ -239,14 +253,16 @@ public final class TileStore implements AutoCloseable {
 			if (attempt > 0) {
 				sleep(500L << attempt);
 			}
+			long started = System.nanoTime();
 			try {
 				HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
 				int code = response.statusCode();
+				Net.attempt(source, code, System.nanoTime() - started, response.body() == null ? 0 : response.body().length);
 				if (code == 200) {
 					byte[] body = response.body();
 					float[] heights = TerrariumPng.decode(body, SIZE);
 					Files.createDirectories(dir);
-					Path tmp = dir.resolve(y + ".png." + Thread.currentThread().threadId() + ".tmp");
+					Path tmp = file.resolveSibling(file.getFileName() + "." + Thread.currentThread().threadId() + ".tmp");
 					Files.write(tmp, body);
 					Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 					DiskCache.written(body.length);
@@ -262,6 +278,7 @@ public final class TileStore implements AutoCloseable {
 				}
 				lastError = "HTTP " + code;
 			} catch (IOException e) {
+				Net.attempt(source, -1, System.nanoTime() - started, 0);
 				lastError = e.getClass().getSimpleName() + ": " + e.getMessage();
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
@@ -269,6 +286,7 @@ public final class TileStore implements AutoCloseable {
 			}
 		}
 
+		Net.failed(source);
 		offlineUntil.set(System.currentTimeMillis() + OFFLINE_BACKOFF_MS);
 		RealEarth.LOGGER.warn("Could not download {} after {} attempts ({}); pausing downloads for {} s",
 			url, MAX_ATTEMPTS, lastError, OFFLINE_BACKOFF_MS / 1000);

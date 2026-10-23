@@ -65,6 +65,7 @@ public final class TerrainField implements AutoCloseable {
 			t.setPriority(Thread.NORM_PRIORITY - 1);
 			return t;
 		});
+		se.itssimple.realearth.data.Net.pool("terrain", workers);
 		this.processed = lru(48);
 		Buildings.clearCache();
 		this.chunks = lru(2048);
@@ -399,6 +400,8 @@ public final class TerrainField implements AutoCloseable {
 	}
 
 	private CompletableFuture<ChunkTerrain> computeChunk(int chunkX, int chunkZ) {
+		// When the chunk was first asked for: how long it then waits for each kind of data, for /earth perf.
+		long asked = System.nanoTime();
 		int n = ChunkTerrain.SPAN;
 		double[] sx = new double[n * n];
 		double[] sy = new double[n * n];
@@ -489,6 +492,13 @@ public final class TerrainField implements AutoCloseable {
 		for (CompletableFuture<OsmWater.Shapes> f : wayTiles) {
 			all[a++] = f;
 		}
+		CompletableFuture.allOf(needed.values().toArray(CompletableFuture[]::new)).whenComplete((v, e) ->
+			se.itssimple.realearth.data.Net.waited("elevation", System.nanoTime() - asked, e != null || needed.values().stream().anyMatch(f -> f.join().degraded)));
+		coverLookup.whenComplete((l, e) -> se.itssimple.realearth.data.Net.waited("land cover", System.nanoTime() - asked, l == null || l.degraded()));
+		if (!wayTiles.isEmpty()) {
+			CompletableFuture.allOf(wayTiles.toArray(CompletableFuture[]::new)).whenComplete((v, e) ->
+				se.itssimple.realearth.data.Net.waited("map", System.nanoTime() - asked, e != null || wayTiles.stream().anyMatch(f -> f.join().failed())));
+		}
 		return CompletableFuture.allOf(all).thenCompose(v -> {
 			// Buildings stand on the ground under their whole footprint, which may reach well beyond
 			// this chunk: fetch the terrain there too before going on.
@@ -533,6 +543,11 @@ public final class TerrainField implements AutoCloseable {
 					addTiles(withBuildings, (long) Math.floor(p[0]) - 2, (long) Math.floor(p[0]) + 3, (long) Math.floor(p[1]) - 2, (long) Math.floor(p[1]) + 3);
 				}
 			}
+			if (!detailTiles.isEmpty()) {
+				CompletableFuture.allOf(detailTiles.values().toArray(CompletableFuture[]::new)).whenComplete((d, e) ->
+					se.itssimple.realearth.data.Net.waited("building detail", System.nanoTime() - asked, e != null
+						|| detailTiles.values().stream().anyMatch(f -> f.join().failed())));
+			}
 			List<CompletableFuture<?>> waits = new ArrayList<>(withBuildings.values());
 			waits.addAll(detailTiles.values());
 			return CompletableFuture.allOf(waits.toArray(CompletableFuture[]::new)).thenApplyAsync(w -> {
@@ -544,6 +559,7 @@ public final class TerrainField implements AutoCloseable {
 				ChunkTerrain built = build(terrain, all2, needed.keySet(), coverLookup.join(), shapes, candidates, details, chunkRuns, sx, sy, onGlobe, chunkX,
 					chunkZ);
 				se.itssimple.realearth.Perf.stop("terrain", started);
+				se.itssimple.realearth.data.Net.waited("everything (chunk ready)", System.nanoTime() - asked, built.degraded);
 				return built;
 			}, workers);
 		});

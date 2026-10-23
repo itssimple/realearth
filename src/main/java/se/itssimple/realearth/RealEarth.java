@@ -152,6 +152,7 @@ public class RealEarth implements ModInitializer {
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (server.getTickCount() % 1200 == 0) {
 				DegradedChunks.save();
+				se.itssimple.realearth.data.Net.logTrouble();
 			}
 			se.itssimple.realearth.world.Places.tick(server);
 			se.itssimple.realearth.world.MapWaypoints.tick(server);
@@ -207,6 +208,7 @@ public class RealEarth implements ModInitializer {
 			t.setDaemon(true);
 			return t;
 		});
+		se.itssimple.realearth.data.Net.pool("map and land cover", auxDownloads);
 		OsmWater map = config.useMapWater ? new OsmWater(config.mapTileJson, cacheRoot.resolve("openfreemap"), auxDownloads) : null;
 		if (map != null && config.useBuildings && config.useBuildingDetail) {
 			map.enableDetail(config.buildingDetailUrl, config.buildingDetailRelease, config.buildingDetailCatalog, cacheRoot.resolve("overture"));

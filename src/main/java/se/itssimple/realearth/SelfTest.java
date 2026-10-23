@@ -1595,6 +1595,39 @@ final class SelfTest {
 			}
 		}));
 
+		phases.add(Map.entry("Downloads", () -> {
+			// Downloads: one per resource at a time, the rest wait for it; and the counts /earth perf shows.
+			{
+				java.util.concurrent.atomic.AtomicInteger ran = new java.util.concurrent.atomic.AtomicInteger();
+				java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+				List<java.util.concurrent.CompletableFuture<byte[]>> asks = new ArrayList<>();
+				for (int i = 0; i < 8; i++) {
+					asks.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+						try {
+							go.await();
+							return se.itssimple.realearth.data.Net.once("selftest://same-resource", "selftest", () -> {
+								ran.incrementAndGet();
+								try {
+									Thread.sleep(300);
+								} catch (InterruptedException e) {
+									Thread.currentThread().interrupt();
+								}
+								return new byte[] {42};
+							});
+						} catch (Exception e) {
+							throw new java.util.concurrent.CompletionException(e);
+						}
+					}, java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()));
+				}
+				go.countDown();
+				boolean same = asks.stream().allMatch(f -> f.join()[0] == 42);
+				check(ran.get() == 1 && same, "eight asks for one resource at once make one download (%d made)", ran.get());
+				for (String line : se.itssimple.realearth.data.Net.report()) {
+					log("  downloads: %s", line);
+				}
+			}
+		}));
+
 		phases.add(Map.entry("Advancements for real places", () -> {
 			// Advancements for real places: all load, under one root.
 			{
