@@ -101,6 +101,12 @@ public final class EarthConfig {
 	public boolean placeTitles = true;
 	/** Towns and railway stations near you as waypoints in Xaero's Minimap, when it is installed (read on the client). */
 	public boolean mapWaypoints = true;
+	/**
+	 * Every this many seconds, a few lines in the game log on how chunk generation is keeping up: where
+	 * each player is and how fast they move, chunks still missing round them, generation and arrival
+	 * times, downloads and waits. 0 is off. Also /earth perf log &lt;seconds&gt;.
+	 */
+	public int perfLogSeconds = 0;
 	/** Height of each storey, in metres (at least 5 blocks). Storeys are counted from the real height at 3 m each. */
 	public double storeyMeters = 4.5;
 	/** Most storeys a building gets. */

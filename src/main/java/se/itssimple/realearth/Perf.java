@@ -36,6 +36,16 @@ public final class Perf {
 		return c == null ? 0 : c.sum();
 	}
 
+	/** Every stage's total nanoseconds and runs now, for working out what happened since an earlier snapshot. */
+	public static Map<String, long[]> snapshot() {
+		Map<String, long[]> out = new TreeMap<>();
+		COUNTS.forEach((stage, count) -> {
+			LongAdder nanos = NANOS.get(stage);
+			out.put(stage, new long[] {nanos == null ? -1 : nanos.sum(), count.sum()});
+		});
+		return out;
+	}
+
 	public static void reset() {
 		NANOS.clear();
 		COUNTS.clear();

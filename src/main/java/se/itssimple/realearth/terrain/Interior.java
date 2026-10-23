@@ -300,7 +300,12 @@ public final class Interior {
 			return null;
 		}
 		long key = (long) room.id << 8 | floor;
-		Map<Integer, Placed> m = furnished.computeIfAbsent(key, k -> furnish(room, floor));
+		Map<Integer, Placed> m = furnished.computeIfAbsent(key, k -> {
+			long started = se.itssimple.realearth.Perf.start();
+			Map<Integer, Placed> placed = furnish(room, floor);
+			se.itssimple.realearth.Perf.stop("fill.buildings.furnish", started);
+			return placed;
+		});
 		return m.get(cell(x, z));
 	}
 
@@ -1438,6 +1443,8 @@ public final class Interior {
 		java.util.Set<Integer> used = new java.util.HashSet<>();
 		// Cells something stands in that you can't walk or step over; none may cut the room in two.
 		java.util.Set<Integer> blocked = new java.util.HashSet<>();
+		// Whether the free floor is in one piece, and its pieces if not: keepsWay's fast answers.
+		Walk walk = new Walk(room, layer, blocked);
 		boolean stocked = false;
 		for (Item item : want) {
 			for (int[] spot : wallSpots) {
@@ -1454,7 +1461,7 @@ public final class Interior {
 						continue;
 					}
 				}
-				if (blocks(item) && !keepsWay(room, layer, blocked, c, foot)) {
+				if (blocks(item) && !keepsWay(room, layer, blocked, c, foot, walk)) {
 					continue;
 				}
 				if (blocks(item)) {
@@ -1484,7 +1491,7 @@ public final class Interior {
 		};
 		if (centre == Item.TABLE && !middle.isEmpty()) {
 			int c = middle.get(0);
-			if (!used.contains(c) && keepsWay(room, layer, blocked, c, -1)) {
+			if (!used.contains(c) && keepsWay(room, layer, blocked, c, -1, walk)) {
 				blocked.add(c);
 				out.put(c, new Placed(Item.TABLE, 0, roll));
 			}
@@ -1496,6 +1503,13 @@ public final class Interior {
 			}
 		}
 		if (room.kind == Kind.HALLROOM || room.kind == Kind.SHOP && room.size() >= 40) {
+			Item it = switch (room.trade == null ? BuildingPlan.Trade.GENERAL : room.trade) {
+				case CHURCH -> Item.PEW;
+				case LIBRARY, BOOKS -> Item.BOOKSHELF;
+				case SCHOOL, OFFICE, FOOD -> Item.TABLE;
+				default -> room.kind == Kind.HALLROOM && room.trade == null ? Item.CRATE : Item.STOCK;
+			};
+			List<Integer> rows = new ArrayList<>();
 			for (int c : middle) {
 				if (used.contains(c)) {
 					continue;
@@ -1505,17 +1519,27 @@ public final class Interior {
 				// Rows a block apart, with aisles round the walls (middle cells are off the walls already).
 				boolean row = room.trade == BuildingPlan.Trade.CHURCH ? Math.floorMod(z + x / 1000, 2) == 0 && Math.floorMod(x, 4) != 0
 					: Math.floorMod(x, 3) == 0 && Math.floorMod(z, 6) != 0;
-				if (!row || !openAround(c, layer, room.id)) {
-					continue;
+				if (row && openAround(c, layer, room.id)) {
+					rows.add(c);
 				}
-				Item it = switch (room.trade == null ? BuildingPlan.Trade.GENERAL : room.trade) {
-					case CHURCH -> Item.PEW;
-					case LIBRARY, BOOKS -> Item.BOOKSHELF;
-					case SCHOOL, OFFICE, FOOD -> Item.TABLE;
-					default -> room.kind == Kind.HALLROOM && room.trade == null ? Item.CRATE : Item.STOCK;
-				};
-				if (blocks(it)) {
-					if (!keepsWay(room, layer, blocked, c, -1)) {
+			}
+			// All the rows at once, if the floor stays in one piece with them: each row cell has free
+			// aisle beside it, so it would have stayed in one piece row by row too. One search of the
+			// room, not one for each row cell. Otherwise one by one, as for the things by the walls.
+			boolean all = false;
+			if (blocks(it) && walk.whole && !rows.isEmpty()) {
+				blocked.addAll(rows);
+				all = keepsWay(room, layer, blocked, -1, -1);
+				if (!all) {
+					blocked.removeAll(rows);
+					// Along the rows in order: each next one then has the one before it on one side only,
+					// and the look round it nearly always does.
+					java.util.Collections.sort(rows);
+				}
+			}
+			for (int c : rows) {
+				if (blocks(it) && !all) {
+					if (!keepsWay(room, layer, blocked, c, -1, walk)) {
 						continue;
 					}
 					blocked.add(c);
@@ -1532,6 +1556,120 @@ public final class Interior {
 	 */
 	private static boolean blocks(Item item) {
 		return item != Item.RUG && item != Item.FLOWER && item != Item.PEW;
+	}
+
+	/**
+	 * The free floor of a room being furnished: whether it is in one piece, and if not, its pieces (a
+	 * label per cell and each piece's size), worked out once. Once a placement leaves it in one piece,
+	 * every later one keeps it so.
+	 */
+	private final class Walk {
+		boolean whole;
+		final Map<Integer, Integer> piece = new HashMap<>();
+		final List<Integer> sizes = new ArrayList<>();
+
+		Walk(Room room, int layer, java.util.Set<Integer> blocked) {
+			for (int c : room.cells) {
+				if (piece.containsKey(c) || !free(room, layer, blocked, c, -1, -1)) {
+					continue;
+				}
+				int label = sizes.size();
+				int size = 0;
+				ArrayDeque<Integer> queue = new ArrayDeque<>(List.of(c));
+				piece.put(c, label);
+				while (!queue.isEmpty()) {
+					int at = queue.poll();
+					size++;
+					for (int d = 0; d < 4; d++) {
+						int n = step(at, d);
+						if (n >= 0 && !piece.containsKey(n) && free(room, layer, blocked, n, -1, -1)) {
+							piece.put(n, label);
+							queue.add(n);
+						}
+					}
+				}
+				sizes.add(size);
+			}
+			whole = sizes.size() == 1;
+		}
+	}
+
+	private boolean free(Room room, int layer, java.util.Set<Integer> blocked, int c, int a, int b) {
+		return c != a && c != b && !blocked.contains(c) && roomOf[layer][c] == room.id && (code[layer][c] == ROOM || code[layer][c] == LANDING);
+	}
+
+	/**
+	 * keepsWay, quickly where it can be. When the free floor is in one piece and one cell is taken, it
+	 * stays in one piece if the free cells next to that cell are joined round it, through the eight
+	 * cells about it (any way through the cell can step round it then); only where they are not is the
+	 * whole room searched. When the floor is in pieces, taking a and b can join it only if every piece
+	 * but one is made of a and b alone (a pocket filled), so only then is it searched. A big hall's rows
+	 * of shelves cost a look round each, not a search of the hall each.
+	 */
+	private boolean keepsWay(Room room, int layer, java.util.Set<Integer> blocked, int a, int b, Walk walk) {
+		if (walk.whole) {
+			return b < 0 && joinedRound(room, layer, blocked, a) || keepsWay(room, layer, blocked, a, b);
+		}
+		int left = 0;
+		for (int label = 0; label < walk.sizes.size(); label++) {
+			int size = walk.sizes.get(label);
+			size -= walk.piece.getOrDefault(a, -1) == label ? 1 : 0;
+			size -= b >= 0 && walk.piece.getOrDefault(b, -1) == label ? 1 : 0;
+			if (size > 0 && ++left > 1) {
+				return false;
+			}
+		}
+		if (keepsWay(room, layer, blocked, a, b)) {
+			walk.whole = true; // in one piece from now on
+			return true;
+		}
+		return false;
+	}
+
+	/** Ring of the eight cells about a cell, in order round it: each next to the one before. */
+	private static final int[] RING_X = {0, 1, 1, 1, 0, -1, -1, -1};
+	private static final int[] RING_Z = {-1, -1, 0, 1, 1, 1, 0, -1};
+
+	/** Whether the free cells beside c (north, east, south, west) are one run round the ring about it, and there is one at least. */
+	private boolean joinedRound(Room room, int layer, java.util.Set<Integer> blocked, int c) {
+		int cx = c % w;
+		int cz = c / w;
+		boolean[] free = new boolean[8];
+		for (int i = 0; i < 8; i++) {
+			int x = cx + RING_X[i];
+			int z = cz + RING_Z[i];
+			if (x < 0 || z < 0 || x >= w || z >= h) {
+				continue;
+			}
+			int n = z * w + x;
+			free[i] = !blocked.contains(n) && roomOf[layer][n] == room.id && (code[layer][n] == ROOM || code[layer][n] == LANDING);
+		}
+		// Runs of free cells round the ring that hold a side neighbour (the even places).
+		int runs = 0;
+		int start = -1;
+		for (int i = 0; i < 8; i++) {
+			if (!free[i]) {
+				start = i;
+				break;
+			}
+		}
+		if (start < 0) {
+			return true; // free all round
+		}
+		boolean inRun = false;
+		boolean runHasSide = false;
+		for (int k = 1; k <= 8; k++) {
+			int i = (start + k) % 8;
+			if (free[i]) {
+				inRun = true;
+				runHasSide |= i % 2 == 0;
+			} else if (inRun) {
+				runs += runHasSide ? 1 : 0;
+				inRun = false;
+				runHasSide = false;
+			}
+		}
+		return runs == 1;
 	}
 
 	/** Whether the room's free floor stays in one piece with cells a and b taken too (b may be -1). */

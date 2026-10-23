@@ -30,7 +30,8 @@ loom {
 			client()
 			name "Play Test"
 			vmArg "-Drealearth.playtest=${project.findProperty('place') ?: '59.3293,18.0686'}"
-			programArgs "--quickPlaySingleplayer", "playtest"
+			vmArg "-Drealearth.flight=${project.findProperty('flight') ?: ''}"
+			programArgs "--quickPlaySingleplayer", "${project.findProperty('world') ?: 'playtest'}"
 			runDir "run-shots"
 		}
 		clean {

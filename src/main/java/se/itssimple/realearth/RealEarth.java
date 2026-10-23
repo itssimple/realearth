@@ -133,6 +133,7 @@ public class RealEarth implements ModInitializer {
 			stop();
 			se.itssimple.realearth.world.Places.clear();
 			se.itssimple.realearth.world.Milestones.clear();
+			se.itssimple.realearth.world.PerfLog.clear();
 		});
 		CommandRegistrationCallback.EVENT.register((dispatcher, registries, environment) ->
 			EarthCommand.register(dispatcher, config.teleportPermissionLevel));
@@ -156,6 +157,7 @@ public class RealEarth implements ModInitializer {
 			}
 			se.itssimple.realearth.world.Places.tick(server);
 			se.itssimple.realearth.world.MapWaypoints.tick(server);
+			se.itssimple.realearth.world.PerfLog.tick(server);
 			se.itssimple.realearth.world.Townsfolk.tick(server);
 			se.itssimple.realearth.world.Milestones.tick(server);
 			// Building detail for the map round each player, before chunks there need it.

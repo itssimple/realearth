@@ -107,6 +107,7 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 	@Override
 	public void createStructures(RegistryAccess registryAccess, ChunkGeneratorStructureState state, StructureManager structureManager,
 		ChunkAccess chunk, StructureTemplateManager templates, ResourceKey<Level> level) {
+		ChunkTimes.started(chunk.getPos().x(), chunk.getPos().z());
 		TerrainField field = RealEarth.terrain();
 		if (field != null) {
 			try {
@@ -915,6 +916,8 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			StreetLife.entities(region, life, center.getMinBlockX(), center.getMinBlockZ());
 		}
 		se.itssimple.realearth.Perf.stop("mobs", started);
+		// The last step of a chunk's generation that is the generator's.
+		ChunkTimes.generated(center.x(), center.z());
 	}
 
 	/**

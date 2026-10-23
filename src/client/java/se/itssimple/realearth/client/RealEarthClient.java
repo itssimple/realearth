@@ -8,6 +8,7 @@ public class RealEarthClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		ClientHere.install();
+		ClientPerfLog.install();
 		if (FabricLoader.getInstance().isModLoaded("xaerominimap")) {
 			try {
 				se.itssimple.realearth.compat.xaero.XaeroMinimapCompat.install();

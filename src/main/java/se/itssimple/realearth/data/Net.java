@@ -188,6 +188,62 @@ public final class Net {
 		POOLS.put(name, pool);
 	}
 
+	/**
+	 * Since the last call: per source, downloads done, their average time, and the trouble (retries,
+	 * rate limits, errors, given up); and per kind of data, chunks' average and longest wait. For the
+	 * running log.
+	 */
+	public static List<String> since(Map<String, long[]> before) {
+		List<String> parts = new ArrayList<>();
+		new TreeMap<>(SOURCES).forEach((name, s) -> {
+			long[] now = {s.ok.sum(), s.okNanos.sum(), s.attempts.sum() - s.requests.sum() + s.shared.sum(), s.rateLimited.sum(),
+				s.serverErrors.sum() + s.otherErrors.sum() + s.networkErrors.sum(), s.failed.sum(), s.shared.sum()};
+			long[] was = before.getOrDefault("source:" + name, new long[now.length]);
+			before.put("source:" + name, now);
+			long ok = now[0] - was[0];
+			long trouble = now[2] - was[2] + now[3] - was[3] + now[4] - was[4] + now[5] - was[5];
+			if (ok > 0 || trouble > 0 || s.inFlight.get() > 0) {
+				StringBuilder b = new StringBuilder(String.format(Locale.ROOT, "%s %d", name, ok));
+				if (ok > 0) {
+					b.append(" (").append(time((now[1] - was[1]) / ok)).append(')');
+				}
+				if (now[6] - was[6] > 0) {
+					b.append(", ").append(now[6] - was[6]).append(" shared");
+				}
+				if (trouble > 0) {
+					b.append(String.format(Locale.ROOT, ", %d retries, %d rate limited, %d errors, %d given up", now[2] - was[2], now[3] - was[3], now[4] - was[4],
+						now[5] - was[5]));
+				}
+				if (s.inFlight.get() > 0) {
+					b.append(", ").append(s.inFlight.get()).append(" on the way");
+				}
+				parts.add(b.toString());
+			}
+		});
+		List<String> lines = new ArrayList<>();
+		lines.add("downloads: " + (parts.isEmpty() ? "none" : String.join("; ", parts)));
+		List<String> pools = new ArrayList<>();
+		new TreeMap<>(POOLS).forEach((name, pool) -> {
+			if (pool instanceof ThreadPoolExecutor t) {
+				pools.add(String.format(Locale.ROOT, "%s %d/%d busy, %d queued", name, t.getActiveCount(), t.getMaximumPoolSize(), t.getQueue().size()));
+			}
+		});
+		lines.add("threads: " + String.join("; ", pools));
+		List<String> waits = new ArrayList<>();
+		new TreeMap<>(WAITS).forEach((what, w) -> {
+			long[] now = {w.count.sum(), w.nanos.sum(), w.without.sum()};
+			long[] was = before.getOrDefault("wait:" + what, new long[now.length]);
+			before.put("wait:" + what, now);
+			long n = now[0] - was[0];
+			if (n > 0) {
+				waits.add(String.format(Locale.ROOT, "%s %s avg over %d%s", what, time((now[1] - was[1]) / n), n,
+					now[2] - was[2] > 0 ? ", " + (now[2] - was[2]) + " without" : ""));
+			}
+		});
+		lines.add("chunk data waits: " + (waits.isEmpty() ? "none" : String.join("; ", waits)));
+		return lines;
+	}
+
 	public static void reset() {
 		SOURCES.clear();
 		WAITS.clear();
