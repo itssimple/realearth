@@ -1,6 +1,10 @@
 {
   "block.realearth.earth_portal": "Earth Portal",
   "generator.realearth.earth": "Real Earth",
+  "gui.realearth.xaero.lat_lon": "Latitude, longitude, elevation (Real Earth)",
+  "gui.realearth.xaero.town": "Town and district (Real Earth)",
+  "config.jade.plugin_realearth.place": "Real Earth: street, town and building",
+  "config.jade.plugin_realearth.coordinates": "Real Earth: latitude, longitude and elevation",
   "advancements.realearth.root.title": "Real Earth",
   "advancements.realearth.root.description": "Set foot on the real Earth",
   "advancements.realearth.town.title": "Welcome to Town",

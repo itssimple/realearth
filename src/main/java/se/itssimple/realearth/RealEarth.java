@@ -125,6 +125,8 @@ public class RealEarth implements ModInitializer {
 		Registry.register(BuiltInRegistries.STRUCTURE_PLACEMENT, id("built_up"), se.itssimple.realearth.world.BuiltUpPlacement.TYPE);
 		Registry.register(BuiltInRegistries.LOOT_FUNCTION_TYPE, id("town_map"), se.itssimple.realearth.world.TownMapFunction.CODEC);
 
+		se.itssimple.realearth.world.HereLink.register();
+
 		ServerLifecycleEvents.SERVER_STARTING.register(RealEarth::start);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			stop();

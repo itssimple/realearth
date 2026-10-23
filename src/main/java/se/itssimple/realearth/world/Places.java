@@ -16,6 +16,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import se.itssimple.realearth.RealEarth;
+import se.itssimple.realearth.api.RealEarthApi;
+import se.itssimple.realearth.api.RealEarthEvents;
 import se.itssimple.realearth.geo.Mercator;
 import se.itssimple.realearth.osm.OsmWater;
 import se.itssimple.realearth.terrain.TerrainField;
@@ -66,10 +68,13 @@ public final class Places {
 		}
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			if (player.level() != earth) {
-				LAST.remove(player.getUUID());
+				if (LAST.remove(player.getUUID()) != null) {
+					HereLink.send(player, null, null);
+				}
 				continue;
 			}
 			Here here = at(field, player.getX(), player.getZ());
+			HereLink.send(player, field, here);
 			if (here == null) {
 				continue; // the map is still on its way
 			}
@@ -79,6 +84,9 @@ public final class Places {
 			}
 			if (here.town() != null) {
 				Milestones.town(player, here);
+				if (last == null || !here.town().equals(last.town())) {
+					RealEarthEvents.TOWN_ENTERED.invoker().onTownEntered(player, RealEarthApi.place(here), RealEarthApi.place(last));
+				}
 			}
 			if (!titles) {
 				continue;
@@ -98,6 +106,7 @@ public final class Places {
 	/** Forgets who was where; for a new world. */
 	public static void clear() {
 		LAST.clear();
+		HereLink.clear();
 	}
 
 	/**

@@ -1478,6 +1478,86 @@ final class SelfTest {
 			}
 		}));
 
+		phases.add(Map.entry("The API for other mods", () -> {
+			// The API for other mods: positions both ways, and what the map has at a block.
+			{
+				TerrainField field = RealEarth.terrain();
+				var column = se.itssimple.realearth.api.RealEarthApi.toBlock(earth, 59.3293, 18.0686).orElseThrow();
+				var back = se.itssimple.realearth.api.RealEarthApi.latLon(earth, column.x(), column.z()).orElseThrow();
+				check(Math.abs(back.latitude() - 59.3293) < 1e-6 && Math.abs(back.longitude() - 18.0686) < 1e-6,
+					"the API: lat/lon to block and back (%.7f, %.7f)", back.latitude(), back.longitude());
+				double y = se.itssimple.realearth.api.RealEarthApi.yOf(earth, 25, column.z()).orElseThrow();
+				double m = se.itssimple.realearth.api.RealEarthApi.elevationMeters(earth, y, column.z()).orElseThrow();
+				check(Math.abs(m - 25) < 1e-6, "elevation to Y and back (25 m -> Y %.1f -> %.3f m)", y, m);
+				check(!se.itssimple.realearth.api.RealEarthApi.isEarth(server.overworld()) || RealEarth.earthIsOverworld(server),
+					"the API answers nothing outside the Earth");
+				var gamla = se.itssimple.realearth.api.RealEarthApi.toBlock(earth, 59.3250, 18.0710).orElseThrow();
+				var place = se.itssimple.realearth.api.RealEarthApi.place(earth, gamla.x(), gamla.z());
+				check(place.isPresent() && place.get().town().equals("Stockholm") && "Gamla stan".equals(place.get().district()) && place.get().capital(),
+					"the API's place in Gamla stan is Gamla stan, Stockholm, a capital (%s)", place);
+				int buildingColumns = 0;
+				int answered = 0;
+				int rooms = 0;
+				int wayColumns = 0;
+				int named = 0;
+				java.util.Map<String, Integer> uses = new java.util.TreeMap<>();
+				java.util.Set<String> streets = new java.util.TreeSet<>();
+				List<String> examples = new ArrayList<>();
+				// Södermalm: blocks of flats along a street grid.
+				var soder = se.itssimple.realearth.api.RealEarthApi.toBlock(earth, 59.3150, 18.0720).orElseThrow();
+				int sCx = (int) Math.floor(soder.x()) >> 4;
+				int sCz = (int) Math.floor(soder.z()) >> 4;
+				for (int cx = sCx - 3; cx <= sCx + 3; cx++) {
+					for (int cz = sCz - 3; cz <= sCz + 3; cz++) {
+						ChunkTerrain c;
+						try {
+							c = field.chunkBlocking(cx, cz, 120);
+						} catch (Exception e) {
+							continue;
+						}
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								int bx = cx * 16 + x;
+								int bz = cz * 16 + z;
+								se.itssimple.realearth.terrain.BuildingPlan plan = c.buildingAt(x, z);
+								if (plan != null) {
+									buildingColumns++;
+									var b = se.itssimple.realearth.api.RealEarthApi.building(earth, new BlockPos(bx, plan.floorY + 1, bz));
+									if (b.isPresent()) {
+										answered++;
+										uses.merge(b.get().use(), 1, Integer::sum);
+										if (b.get().room() != null) {
+											rooms++;
+											if (examples.size() < 6 && (bx + bz) % 97 == 0) {
+												examples.add(b.get().toString());
+											}
+										}
+									}
+								}
+								if (c.way[k] != 0 && plan == null) {
+									wayColumns++;
+									var st = se.itssimple.realearth.api.RealEarthApi.street(earth, bx, bz);
+									if (st.isPresent()) {
+										named++;
+										streets.add(st.get());
+									}
+								}
+							}
+						}
+					}
+				}
+				log("API on Södermalm: %d of %d building columns answered, %d in a room; uses %s; %d of %d street columns named, %d streets, e.g. %s",
+					answered, buildingColumns, rooms, uses, named, wayColumns, streets.size(), streets.stream().limit(8).toList());
+				for (String e : examples) {
+					log("  %s", e);
+				}
+				check(buildingColumns > 1000 && answered > buildingColumns * 0.95, "the API knows the buildings on Södermalm (%d of %d)", answered, buildingColumns);
+				check(rooms > answered / 3, "the API finds rooms on the ground floors (%d of %d)", rooms, answered);
+				check(streets.size() >= 5 && named > wayColumns / 4, "the API names the streets on Södermalm (%d of %d columns, %d names)", named, wayColumns, streets.size());
+			}
+		}));
+
 		phases.add(Map.entry("Advancements for real places", () -> {
 			// Advancements for real places: all load, under one root.
 			{

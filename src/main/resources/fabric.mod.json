@@ -16,6 +16,9 @@
     ],
     "client": [
       "se.itssimple.realearth.client.RealEarthClient"
+    ],
+    "jade": [
+      "se.itssimple.realearth.compat.jade.RealEarthJadePlugin"
     ]
   },
   "mixins": [
@@ -28,6 +31,8 @@
     "fabric-api": "*"
   },
   "suggests": {
-    "distanthorizons": ">=3.3.0"
+    "distanthorizons": ">=3.3.0",
+    "jade": ">=26.1",
+    "xaerominimap": ">=26.0"
   }
 }

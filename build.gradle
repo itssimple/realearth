@@ -51,6 +51,7 @@ loom {
 			vmArg "-Drealearth.dhValidate=true"
 			vmArg "-Drealearth.lodCanopy=${project.findProperty('lodCanopy') ?: 'true'}"
 			vmArg "-Drealearth.shotOnly=${project.findProperty('shotOnly') ?: ''}"
+			vmArg "-Drealearth.shotHud=${project.findProperty('shotHud') ?: 'false'}"
 			programArgs "--quickPlaySingleplayer", "earthtest", "--width", "1920", "--height", "1080"
 			runDir "run-shots"
 		}
@@ -65,6 +66,10 @@ dependencies {
 	// Optional: Distant Horizons, for level-of-detail terrain. Compile against it, never ship it.
 	// Download DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar from Modrinth into libs/.
 	compileOnly files("libs/DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar")
+	// Optional: Jade and Xaero's Minimap, for what Real Earth shows in them. From CurseForge or Modrinth into libs/;
+	// xaerolib is the jar inside the minimap's (META-INF/jars).
+	compileOnly files("libs/Jade-mc26.1-Fabric-26.1.9.jar")
+	compileOnly files("libs/xaerominimap-fabric-26.1.2-26.6.1.jar", "libs/xaerolib-fabric-26.1.2-1.8.3.jar")
 }
 
 processResources {

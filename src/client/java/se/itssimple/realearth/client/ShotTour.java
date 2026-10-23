@@ -155,7 +155,8 @@ final class ShotTour {
 			RealEarth.LOGGER.info("[shots] t={}s client chunks loaded: {}", ticks / 20, mc.level.getChunkSource().getLoadedChunksCount());
 		}
 		if (ticks == SETTLE_TICKS) {
-			mc.options.hideGui = true;
+			// -Drealearth.shotHud=true keeps the HUD, for what other mods show there (Jade, a minimap).
+			mc.options.hideGui = !Boolean.getBoolean("realearth.shotHud");
 		} else if (ticks == SETTLE_TICKS + 5) {
 			Shot shot = SHOTS.get(index);
 			Screenshot.grab(mc.gameDirectory, "realearth-" + shot.name + ".png", mc.getMainRenderTarget(), 1,

@@ -393,6 +393,27 @@ world; only the start point and scale differ.)
 
 Planned features and known issues: see [ROADMAP.md](ROADMAP.md).
 
+## Other mods
+
+- **Jade.** Under the block you look at on the Earth: the building and room it belongs to (a shop's name and what
+  it sells, the storey), the street, district and town, and the block's latitude, longitude and real elevation.
+  Two toggles in Jade's plugin settings. Needs Jade on the server too (it is in singleplayer).
+- **Xaero's Minimap.** Two lines under the minimap: latitude, longitude and real elevation, and the district and
+  town. Turn them on, off or move them in the minimap's info display settings. Works on servers with Real Earth.
+- **Lootr** and **Distant Horizons**: see above.
+
+**For mod authors.** `se.itssimple.realearth.api` (compile against the Real Earth jar, `modCompileOnly`):
+- `RealEarthApi`: `isEarth(level)`, `latLon(level, x, z)` and `toBlock(level, lat, lon)`, `elevationMeters` and
+  `yOf`, `groundMeters`, `place(level, x, z)` (town, district, capital), `street(level, x, z)` and
+  `building(level, pos)` (use, hall kind, name, storeys, the storey and room at the block). Server side only;
+  answers are empty where the map is not loaded yet, and nothing waits for a download.
+- `RealEarthEvents.TOWN_ENTERED`: a player walked into a town, or joined in one, with the town before it.
+
+```java
+RealEarthEvents.TOWN_ENTERED.register((player, town, previous) ->
+    player.sendSystemMessage(Component.literal("Welcome to " + town.town())));
+```
+
 ## Development
 
 Requires Java 25.
@@ -407,8 +428,11 @@ Requires Java 25.
 ./gradlew runShots -PshotOnly=geiranger    # one place; put Distant Horizons in run-shots/mods/ to test LODs
 ```
 
-Distant Horizons is a compile-only dependency: download `DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar` from
-Modrinth into `libs/` before building. The elevation tile approach (global sample grid, pixel-centre sampling,
+Distant Horizons, Jade and Xaero's Minimap are compile-only dependencies: download
+`DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar`, `Jade-mc26.1-Fabric-26.1.9.jar` and
+`xaerominimap-fabric-26.1.2-26.6.1.jar` into `libs/` before building, with `xaerolib-fabric-26.1.2-1.8.3.jar`
+taken out of the minimap's `META-INF/jars`. `-PshotHud=true` keeps the HUD in screenshots, for what those
+mods show. The elevation tile approach (global sample grid, pixel-centre sampling,
 the 404-over-ocean behaviour) carried over from the GeoWorld project.
 
 ## About how this mod was made

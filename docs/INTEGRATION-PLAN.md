@@ -1,7 +1,8 @@
 # Integration with other mods: a plan
 
-A proposal to discuss, not built yet. It asks what other mods could usefully get from Real Earth, and in what
-form, so the first pieces are the ones that earn their keep.
+It asks what other mods could usefully get from Real Earth, and in what form, so the first pieces are the ones
+that earn their keep. Steps 1 and 2 of the suggested order are built (see the README's "Other mods"); the rest is
+still a proposal.
 
 ## What Real Earth knows that others can't
 
@@ -51,8 +52,9 @@ them when it is present and nothing breaks when it isn't.
 
 ## Suggested order
 
-1. The API's position queries and `TownEntered` (small, and the base for everything else).
-2. Jade and Xaero's support, through the API, since they are in the usual pack.
+1. Done: the API's position queries and `TownEntered` (small, and the base for everything else).
+2. Done: Jade and Xaero's support, through the API, since they are in the usual pack. Xaero's gets its lines from
+   the server once a second (`realearth:here`), so it works in multiplayer. Not yet: waypoints for towns.
 3. Palette tags and the landmark structure hook.
 4. `BuildingGenerated` for interior decorators.
 
