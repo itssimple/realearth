@@ -80,6 +80,9 @@ final class ShotTour {
 		new Shot("riddarholmskyrkan", 59.3247, 18.0610, 25, -90, 12),
 		// Street life: Kungstradgarden's park, the market on Hotorget, boats along Strandvagen.
 		new Shot("park", 59.3318, 18.0712, 14, 0, 30),
+		// Inside tunnels: the Arlanda line's, and Soderledstunneln under Sodermalm.
+		new Shot("inside-tunnel", 59.6141, 17.8612, 0, 0, 0),
+		new Shot("inside-roadtunnel", 59.3140, 18.0700, 0, 0, 0),
 		new Shot("market", 59.3346, 18.0629, 8, 0, 35),
 		new Shot("marina", 59.3324, 18.0860, 10, 0, 25),
 		new Shot("city-sky", 59.3300, 18.0700, 300, 180, 50),
@@ -200,7 +203,7 @@ final class ShotTour {
 	 */
 	private static BlockPos findInterior(ServerLevel level, TerrainField field, int x, int z, String what, float[] look) {
 		java.util.Set<Long> seen = new java.util.HashSet<>();
-		boolean tower = what.equals("tower");
+		boolean tower = what.equals("tower") || what.startsWith("tunnel") || what.equals("roadtunnel");
 		for (int r = 0; r <= (tower ? 16 : 6); r++) {
 			for (int dx = -r; dx <= r; dx++) {
 				for (int dz = -r; dz <= r; dz++) {
@@ -215,6 +218,32 @@ final class ShotTour {
 						t = null;
 					}
 					if (t == null) {
+						continue;
+					}
+					if (what.equals("tunnel") || what.equals("roadtunnel")) {
+						// Standing in the bore, looking along it: where it runs straight for a while.
+						for (int cz = 1; cz < 15; cz++) {
+							for (int cx = 1; cx < 15; cx++) {
+								int k = se.itssimple.realearth.terrain.ChunkTerrain.index(cx, cz);
+								boolean rail = t.tunnelKind[k] == se.itssimple.realearth.osm.Ways.RAIL;
+								if (t.tunnel[k] != se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE || rail != what.equals("tunnel")) {
+									continue;
+								}
+								boolean alongX = t.tunnel[se.itssimple.realearth.terrain.ChunkTerrain.index(cx - 1, cz)] == se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE
+									&& t.tunnel[se.itssimple.realearth.terrain.ChunkTerrain.index(cx + 1, cz)] == se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE
+									&& t.tunnel[se.itssimple.realearth.terrain.ChunkTerrain.index(cx, cz - 1)] != se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE;
+								boolean alongZ = t.tunnel[se.itssimple.realearth.terrain.ChunkTerrain.index(cx, cz - 1)] == se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE
+									&& t.tunnel[se.itssimple.realearth.terrain.ChunkTerrain.index(cx, cz + 1)] == se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE
+									&& t.tunnel[se.itssimple.realearth.terrain.ChunkTerrain.index(cx - 1, cz)] != se.itssimple.realearth.terrain.ChunkTerrain.TUNNEL_BORE;
+								int wx = ((x >> 4) + dx) * 16 + cx;
+								int wz = ((z >> 4) + dz) * 16 + cz;
+								if ((alongX || alongZ) && t.topSolidY[k] - t.tunnelY[k] > 8) {
+									look[0] = alongX ? yaw(1, 0) : yaw(0, 1);
+									RealEarth.LOGGER.info("[shots] tunnel at {},{} floor Y {} under ground at Y {}", wx, wz, t.tunnelY[k], t.topSolidY[k]);
+									return new BlockPos(wx, t.tunnelY[k] + 2, wz);
+								}
+							}
+						}
 						continue;
 					}
 					for (var plan : t.plans) {
