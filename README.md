@@ -120,9 +120,12 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
   draws across the water's edge are built up out of it as a causeway, so they don't break off at the shore.
 - **Tunnels** for roads, paths and railways are dug through the ground: a block wider each side than the way,
   four blocks high, lined with stone where they run through rock or under water, with lanterns along the roof.
-  The floor runs straight from the ground at one portal to the ground at the other, so the ways outside carry
-  straight on; a tunnel the map splits across tiles is followed to its real ends first. A tunnel just under a
-  building, a passage, goes through it.
+  The floor starts at the ground at each portal, so the ways outside carry straight on, ramps down from there
+  as steeply as a bridge's approach, and then keeps at least three blocks of ground over the roof, at a
+  railway's or a road's grade (deeper under a hill). Where a tunnel branches or a ramp joins the main tube
+  under the ground, that end stays down at depth. A tunnel under 200 m (mostly a way under a road) stays
+  level. A tunnel the map splits across tiles is followed to its real ends first. A tunnel just under a
+  building, a passage, goes through it. Lanterns hang only under a roof.
 
 Only newly generated chunks get these: in a world from an earlier version, towns and roads start where new
 terrain begins.

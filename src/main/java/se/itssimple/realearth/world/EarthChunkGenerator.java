@@ -378,11 +378,13 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 					for (int y = floor + 1; y < roof; y++) {
 						chunk.setBlockState(new BlockPos(x, y, z), AIR, 0);
 					}
-					boolean light = se.itssimple.realearth.terrain.Tunnels.lit(t, x, z, baseX + x, baseZ + z);
-					if (light || !chunk.getBlockState(new BlockPos(x, roof, z)).isAir()) {
+					// The roof where there is ground over it; where the bore comes up into the open (its ramps by
+					// the portals), none, and no lantern hanging from nothing.
+					boolean covered = !chunk.getBlockState(new BlockPos(x, roof, z)).isAir();
+					if (covered) {
 						chunk.setBlockState(new BlockPos(x, roof, z), lining, 0);
 					}
-					if (light) {
+					if (covered && se.itssimple.realearth.terrain.Tunnels.lit(t, x, z, baseX + x, baseZ + z)) {
 						chunk.setBlockState(new BlockPos(x, roof - 1, z), Blocks.LANTERN.defaultBlockState().setValue(BlockStateProperties.HANGING, true), 0);
 					}
 				} else {

@@ -21,8 +21,12 @@ import se.itssimple.realearth.osm.Ways;
  * <li><b>Runs.</b> The map splits a tunnel at every tile edge (each copy reaching a little into the next
  * tile) and wherever a tag changes. Its pieces are joined into one run, reading the map tiles further
  * along until both of its real ends are found, so every chunk it passes under sees the same tunnel.</li>
- * <li><b>The floor</b> runs straight from the ground at one portal to the ground at the other, like the
- * line between a bridge's ends; the ways outside carry on from the same heights.</li>
+ * <li><b>The floor</b> starts at the ground at each portal, where the ways outside carry on from it, and
+ * ramps down from there as steeply as a bridge's approach until the roof has ground over it; under the
+ * ground it keeps that cover, at a railway's or a road's grade, and under a hill it runs no higher than
+ * the straight line between the portals. A short one, mostly a way under a road, stays level. Where a
+ * tunnel ends in another (a branch, a ramp down to the main tube), that end is down at depth, not at a
+ * portal.</li>
  * <li><b>The bore</b> is the way's width and a block more each side, {@link #HEADROOM_BLOCKS} high, lined
  * with stone where it runs through the ground, with a lantern under its roof every so often.</li>
  * </ul>
@@ -37,19 +41,35 @@ public final class Tunnels {
 	/** Most map tiles read to follow one chunk's tunnels to their ends. */
 	private static final int MAX_EXTRA_TILES = 24;
 
-	private static final Map<String, double[]> ENDS = new ConcurrentHashMap<>();
+	/** Steepest a tunnel's floor slopes under the ground: a railway's (rise over run), and a road's or path's. */
+	private static final double RAIL_GRADE = 0.035;
+	private static final double ROAD_GRADE = 0.07;
+	/** Ground kept over a tunnel's roof, in blocks, where its floor can go deep enough. */
+	private static final int COVER_BLOCKS = 3;
+	/**
+	 * A tunnel shorter than this keeps the straight floor between its portals: it is mostly a way passing
+	 * under a road or a railway, which stays level rather than dipping to go under the ground.
+	 */
+	private static final double DEEP_MIN_METERS = 200;
+	/** Spacing of the ground samples along a tunnel that its floor is worked out from, in metres. */
+	private static final double PROFILE_STEP_METERS = 8;
+	/** Each tunnel's floor, in metres every PROFILE_STEP along it: worked out once, the same for every chunk. */
+	private static final Map<String, double[]> PROFILES = new ConcurrentHashMap<>();
 
 	private Tunnels() {
 	}
 
-	/** One tunnel: its pieces joined end to end, in sample coordinates, and its floor at each end (metres). */
+	/** One tunnel: its pieces joined end to end, in sample coordinates, and its floor along it (metres). */
 	static final class Run {
 		final double[] points;
 		final double[] arc;
 		final byte kind;
 		final double widthMeters;
-		double startMeters;
-		double endMeters;
+		/** Floor heights at evenly spaced points from one end to the other, both ends included. */
+		double[] profile = {0, 0};
+		/** Whether each end comes out into the open; otherwise it meets another tunnel under the ground. */
+		boolean portalStart = true;
+		boolean portalEnd = true;
 		final double minX;
 		final double minY;
 		final double maxX;
@@ -84,10 +104,29 @@ public final class Tunnels {
 			return arc[arc.length - 1];
 		}
 
-		/** Floor height in metres at arc length s: straight between the ends. */
+		/** Floor height in metres at arc length s (samples), between the profile's points. */
 		double floorAt(double s) {
 			double u = length() > 0 ? Math.max(0, Math.min(1, s / length())) : 0;
-			return startMeters + (endMeters - startMeters) * u;
+			double i = u * (profile.length - 1);
+			int a = Math.min(profile.length - 2, (int) Math.floor(i));
+			return profile[a] + (profile[a + 1] - profile[a]) * (i - a);
+		}
+
+		/** The point at arc length s along the line. */
+		double[] pointAt(double s) {
+			int n = arc.length;
+			if (n == 1 || s <= 0) {
+				return new double[] {points[0], points[1]};
+			}
+			for (int i = 1; i < n; i++) {
+				if (s <= arc[i] || i == n - 1) {
+					double seg = arc[i] - arc[i - 1];
+					double u = seg > 0 ? Math.max(0, Math.min(1, (s - arc[i - 1]) / seg)) : 0;
+					return new double[] {points[2 * i - 2] + (points[2 * i] - points[2 * i - 2]) * u,
+						points[2 * i - 1] + (points[2 * i + 1] - points[2 * i - 1]) * u};
+				}
+			}
+			return new double[] {points[2 * n - 2], points[2 * n - 1]};
 		}
 
 		boolean rail() {
@@ -106,8 +145,11 @@ public final class Tunnels {
 	 */
 	static List<Run> near(TerrainField field, List<OsmWater.Shapes> shapes, double minX, double minY, double maxX, double maxY, double margin) {
 		List<OsmWater.Way> pool = new ArrayList<>();
+		// The ways on the ground too: an end they carry on from is a portal, whatever else meets it there.
+		List<OsmWater.Way> surface = new ArrayList<>();
 		Set<Long> tiles = new HashSet<>();
 		for (OsmWater.Shapes s : shapes) {
+			surface.addAll(s.ways());
 			for (OsmWater.Way w : s.tunnels()) {
 				pool.add(w);
 				tiles.add(key(w.tileX(), w.tileY()));
@@ -133,6 +175,7 @@ public final class Tunnels {
 				continue;
 			}
 			used.put(seed, true);
+			List<OsmWater.Way> taken = new ArrayList<>(List.of(seed));
 			List<double[]> line = new ArrayList<>();
 			double[] p = seed.points();
 			for (int i = 0; i < p.length; i += 2) {
@@ -142,13 +185,13 @@ public final class Tunnels {
 			for (int side = 0; side < 2; side++) {
 				for (int guard = 0; guard < 256; guard++) {
 					double[] end = line.get(line.size() - 1);
-					if (!extend(line, pool, used, seed.kind(), order)) {
+					if (!extend(line, pool, used, taken, seed.kind(), order)) {
 						// No piece goes on from here: a real end, unless the map cut it at a tile edge.
-						if (extra[0] >= MAX_EXTRA_TILES || !cutAtTileEdge(end, line, seed) || !readTile(field, end, pool, tiles)) {
+						if (extra[0] >= MAX_EXTRA_TILES || !cutAtTileEdge(end, line, seed) || !readTile(field, end, pool, surface, tiles)) {
 							break;
 						}
 						extra[0]++;
-						if (!extend(line, pool, used, seed.kind(), order)) {
+						if (!extend(line, pool, used, taken, seed.kind(), order)) {
 							break;
 						}
 					}
@@ -173,6 +216,8 @@ public final class Tunnels {
 				pts[2 * i + 1] = line.get(i)[1];
 			}
 			Run run = new Run(pts, seed.kind(), seed.widthMeters());
+			run.portalStart = !junction(pool, surface, taken, line, a, run.rail());
+			run.portalEnd = !junction(pool, surface, taken, line, b, run.rail());
 			floor(field, run);
 			runs.add(run);
 		}
@@ -180,7 +225,7 @@ public final class Tunnels {
 	}
 
 	/** Carries the line on from its last point with a piece that starts there or that the end lies on. True if it did. */
-	private static boolean extend(List<double[]> line, List<OsmWater.Way> pool, Map<OsmWater.Way, Boolean> used, byte kind,
+	private static boolean extend(List<double[]> line, List<OsmWater.Way> pool, Map<OsmWater.Way, Boolean> used, List<OsmWater.Way> taken, byte kind,
 		Comparator<OsmWater.Way> order) {
 		double[] end = line.get(line.size() - 1);
 		List<OsmWater.Way> candidates = new ArrayList<>();
@@ -200,6 +245,7 @@ public final class Tunnels {
 					line.add(new double[] {p[2 * i], p[2 * i + 1]});
 				}
 				used.put(w, true);
+				taken.add(w);
 				return true;
 			}
 			if (Math.hypot(p[2 * n - 2] - end[0], p[2 * n - 1] - end[1]) <= JOIN) {
@@ -207,6 +253,7 @@ public final class Tunnels {
 					line.add(new double[] {p[2 * i], p[2 * i + 1]});
 				}
 				used.put(w, true);
+				taken.add(w);
 				return true;
 			}
 			// Overlapping: the end lies on the piece; carry on along it, away from the line.
@@ -228,6 +275,35 @@ public final class Tunnels {
 					}
 				}
 				used.put(w, true);
+				taken.add(w);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Whether a run's end meets another tunnel of its family (rail with rail, road with road) under the
+	 * ground, with no way of its family on the ground carrying on from it: a branch, a ramp joining the
+	 * main tube, lines parting at a station. Such an end is no portal, and the floor stays down there.
+	 */
+	private static boolean junction(List<OsmWater.Way> pool, List<OsmWater.Way> surface, List<OsmWater.Way> taken, List<double[]> line, double[] end,
+		boolean rail) {
+		for (OsmWater.Way w : surface) {
+			boolean wRail = w.kind() == Ways.RAIL || w.kind() == Ways.TRAM;
+			double[] q = w.points();
+			if (wRail == rail && (Math.hypot(q[0] - end[0], q[1] - end[1]) <= JOIN || Math.hypot(q[q.length - 2] - end[0], q[q.length - 1] - end[1]) <= JOIN)) {
+				return false;
+			}
+		}
+		double[] near = new double[3];
+		for (OsmWater.Way w : pool) {
+			boolean wRail = w.kind() == Ways.RAIL || w.kind() == Ways.TRAM;
+			if (wRail != rail || taken.contains(w) || w.maxX() < end[0] - JOIN || w.minX() > end[0] + JOIN || w.maxY() < end[1] - JOIN
+				|| w.minY() > end[1] + JOIN || liesAlong(w, line)) {
+				continue;
+			}
+			if (nearestOn(w.points(), end[0], end[1], near) <= JOIN) {
 				return true;
 			}
 		}
@@ -246,7 +322,7 @@ public final class Tunnels {
 	}
 
 	/** Reads the map tiles round a point, adding their tunnel pieces to the pool. True if any tile was new. */
-	private static boolean readTile(TerrainField field, double[] at, List<OsmWater.Way> pool, Set<Long> tiles) {
+	private static boolean readTile(TerrainField field, double[] at, List<OsmWater.Way> pool, List<OsmWater.Way> surface, Set<Long> tiles) {
 		if (field.map() == null) {
 			return false;
 		}
@@ -258,7 +334,9 @@ public final class Tunnels {
 				continue;
 			}
 			try {
-				pool.addAll(field.map().tile(x, t[1]).get(60, TimeUnit.SECONDS).tunnels());
+				OsmWater.Shapes shapes = field.map().tile(x, t[1]).get(60, TimeUnit.SECONDS);
+				pool.addAll(shapes.tunnels());
+				surface.addAll(shapes.ways());
 				any = true;
 			} catch (Exception e) {
 				// Not to be had: the tunnel ends where its pieces do.
@@ -299,15 +377,85 @@ public final class Tunnels {
 		return best;
 	}
 
-	/** The ground at a run's two ends, the floor's height there: from the elevation at each end. */
+	/** A run's floor: worked out from the ground along it the first time the tunnel is met (see {@link #profile}). */
 	private static void floor(TerrainField field, Run run) {
 		int n = run.points.length / 2;
 		String key = run.kind + ":" + Math.round(run.points[0] * 4) + "," + Math.round(run.points[1] * 4) + ":"
-			+ Math.round(run.points[2 * n - 2] * 4) + "," + Math.round(run.points[2 * n - 1] * 4);
-		double[] ends = ENDS.computeIfAbsent(key, k -> new double[] {ground(field, run.points[0], run.points[1]),
-			ground(field, run.points[2 * n - 2], run.points[2 * n - 1])});
-		run.startMeters = ends[0];
-		run.endMeters = ends[1];
+			+ Math.round(run.points[2 * n - 2] * 4) + "," + Math.round(run.points[2 * n - 1] * 4) + ":" + run.portalStart + run.portalEnd;
+		run.profile = PROFILES.computeIfAbsent(key, k -> profile(field, run));
+	}
+
+	/**
+	 * The floor along a run, every PROFILE_STEP metres. At each portal it is the ground there. Along the
+	 * way it wants to be deep enough for ground over the roof (under the lowest ground nearby), and no
+	 * higher than the straight line between the portals. Under the ground it slopes no steeper than the
+	 * run's grade; from each portal it ramps down to that depth at a bridge approach's gradient, and a
+	 * tunnel too short to get there goes as deep as its ramps allow.
+	 */
+	private static double[] profile(TerrainField field, Run run) {
+		double[] mid = run.pointAt(run.length() / 2);
+		double lat = Mercator.latitudeOfSampleY(mid[1]);
+		double spacing = Mercator.sampleSpacingMeters(lat);
+		double perMeter = field.projection().blocksPerMeter(lat);
+		double meters = run.length() * spacing;
+		int n = Math.max(2, (int) Math.ceil(meters / PROFILE_STEP_METERS) + 1);
+		double step = meters / (n - 1);
+		double[] ground = new double[n];
+		for (int i = 0; i < n; i++) {
+			double[] p = run.pointAt(run.length() * i / (n - 1));
+			ground[i] = ground(field, p[0], p[1]);
+		}
+		// Floor to ground over the roof: the floor block, the headroom, the roof's lining, and the cover.
+		double depth = (HEADROOM_BLOCKS + 2 + COVER_BLOCKS) / perMeter;
+		// A portal's floor is the ground there; where the end meets another tunnel, it is down at depth.
+		double start = run.portalStart ? ground[0] : ground[0] - depth;
+		double end = run.portalEnd ? ground[n - 1] : ground[n - 1] - depth;
+		if (meters < DEEP_MIN_METERS) {
+			return new double[] {start, end};
+		}
+		double[] floor = new double[n];
+		for (int i = 0; i < n; i++) {
+			double lowest = ground[i];
+			for (int j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) {
+				lowest = Math.min(lowest, ground[j]);
+			}
+			double straight = start + (end - start) * i / (n - 1);
+			floor[i] = Math.min(straight, lowest - depth);
+		}
+		// No steeper than the grade (or the line between the ends, where that is steeper). A junction end is
+		// held at its depth, so the passes start from it.
+		if (!run.portalStart) {
+			floor[0] = start;
+		}
+		if (!run.portalEnd) {
+			floor[n - 1] = end;
+		}
+		double rise = Math.max(run.rail() ? RAIL_GRADE : ROAD_GRADE, Math.abs(end - start) / Math.max(1, meters)) * step;
+		for (int i = 1; i < n; i++) {
+			floor[i] = Math.min(floor[i], floor[i - 1] + rise);
+		}
+		for (int i = n - 2; i >= 0; i--) {
+			floor[i] = Math.min(floor[i], floor[i + 1] + rise);
+		}
+		// And from each portal's ground a ramp down to that, as steep as a bridge's approach: the stretch
+		// open to the sky is short, walled by the lining.
+		double ramp = Math.max(Bridges.GRADIENT, Math.abs(end - start) / Math.max(1, meters)) * step;
+		for (int i = 0; i < n; i++) {
+			double fromStart = run.portalStart ? start - ramp * i : Double.NEGATIVE_INFINITY;
+			double fromEnd = run.portalEnd ? end - ramp * (n - 1 - i) : Double.NEGATIVE_INFINITY;
+			floor[i] = Math.max(floor[i], Math.max(fromStart, fromEnd));
+		}
+		if (Boolean.getBoolean("realearth.selftest")) {
+			double lowest = Double.MAX_VALUE;
+			for (double f : floor) {
+				lowest = Math.min(lowest, f);
+			}
+			se.itssimple.realearth.RealEarth.LOGGER.info("[tunnels] run kind {}{}{} at {},{}: {} m, {} points, ground {}..{} m, floor ends {}/{} lowest {} m", run.kind,
+				run.portalStart ? "" : " (junction at start)", run.portalEnd ? "" : " (junction at end)",
+				Math.round(lat * 1e4) / 1e4, Math.round(Projection.wrapLongitude((mid[0] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0) * 1e4) / 1e4,
+				Math.round(meters), run.points.length / 2, Math.round(start), Math.round(end), Math.round(floor[0]), Math.round(floor[n - 1]), Math.round(lowest));
+		}
+		return floor;
 	}
 
 	private static double ground(TerrainField field, double sx, double sy) {

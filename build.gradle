@@ -17,6 +17,7 @@ loom {
 			server()
 			name "Self-test Server"
 			vmArg "-Drealearth.selftest=true"
+			vmArg "-Drealearth.selftestOnly=${project.findProperty('only') ?: ''}"
 			runDir "run-selftest"
 		}
 		selftestEarthType {

@@ -288,6 +288,13 @@ final class SelfTest {
 			List<Map.Entry<String, Runnable>> phases = server.submit(() -> inWorld(server)).join();
 			long longest = 0;
 			String longestName = "";
+			// -Drealearth.selftestOnly=Tunnels,API runs only the phases whose names hold one of the words.
+			String only = System.getProperty("realearth.selftestOnly", "");
+			if (!only.isBlank()) {
+				List<String> words = java.util.Arrays.stream(only.split(",")).map(String::trim).filter(w -> !w.isEmpty()).toList();
+				phases.removeIf(p -> words.stream().noneMatch(w -> p.getKey().contains(w)));
+				log("running only the phases with %s: %s", words, phases.stream().map(Map.Entry::getKey).toList());
+			}
 			for (Map.Entry<String, Runnable> phase : phases) {
 				long started = System.nanoTime();
 				server.submit(() -> {
@@ -1686,6 +1693,86 @@ final class SelfTest {
 				for (int i = 0; i < ride.length; i++) {
 					ride[i] += r[i];
 				}
+			}));
+		}
+		// Tunnels under the ground: a long tunnel's roof stays under the ground over it, and no lantern hangs
+		// under the open sky. Soderledstunneln under Sodermalm, Citybanan under the city, a rail tunnel in
+		// Gothenburg; and a short one, a railway under a road by Arlanda (last: no cover asked of it).
+		for (double[] place : new double[][] {{59.3150, 18.0720, 1}, {59.3335, 18.0587, 1}, {57.7122, 11.9785, 1}, {59.6141, 17.8612, 0}}) {
+			phases.add(Map.entry(String.format(java.util.Locale.ROOT, "Tunnels under the ground at %.4f, %.4f", place[0], place[1]), () -> {
+				TerrainField field = RealEarth.terrain();
+				int cx0 = (int) Math.floor(field.projection().blockX(place[0], place[1])) >> 4;
+				int cz0 = (int) Math.floor(field.projection().blockZ(place[0])) >> 4;
+				int bores = 0;
+				int open = 0;
+				// Of main roads, motorways and railways: these have to be under the ground. A short service
+				// road, street or path in a tunnel (into a garage, under a road) may stay at street level.
+				int mainBores = 0;
+				int mainOpen = 0;
+				int lanterns = 0;
+				int hanging = 0;
+				Map<Integer, Integer> openKinds = new java.util.TreeMap<>();
+				List<String> samples = new ArrayList<>();
+				for (int cx = cx0 - 3; cx <= cx0 + 3; cx++) {
+					for (int cz = cz0 - 3; cz <= cz0 + 3; cz++) {
+						ChunkTerrain c;
+						try {
+							c = field.chunkBlocking(cx, cz, 120);
+						} catch (Exception e) {
+							continue;
+						}
+						earth.getChunk(cx, cz);
+						for (int x = 0; x < 16; x++) {
+							for (int z = 0; z < 16; z++) {
+								int k = ChunkTerrain.index(x, z);
+								if (c.tunnel[k] != ChunkTerrain.TUNNEL_BORE) {
+									continue;
+								}
+								bores++;
+								byte kind = c.tunnelKind[k];
+								boolean main = kind == se.itssimple.realearth.osm.Ways.MAJOR || kind == se.itssimple.realearth.osm.Ways.MOTORWAY
+									|| kind == se.itssimple.realearth.osm.Ways.RAIL_BED || kind == se.itssimple.realearth.osm.Ways.RAIL
+									|| kind == se.itssimple.realearth.osm.Ways.TRAM;
+								if (main) {
+									mainBores++;
+								}
+								int bx = cx * 16 + x;
+								int bz = cz * 16 + z;
+								int roof = c.tunnelY[k] + se.itssimple.realearth.terrain.Tunnels.HEADROOM_BLOCKS + 1;
+								int sky = earth.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, bx, bz);
+								boolean exposed = sky <= roof + 1;
+								if (exposed) {
+									open++;
+									openKinds.merge((int) c.tunnelKind[k], 1, Integer::sum);
+									if (main) {
+										mainOpen++;
+									}
+								}
+								if (earth.getBlockState(new BlockPos(bx, roof - 1, bz)).is(net.minecraft.world.level.block.Blocks.LANTERN)) {
+									lanterns++;
+									if (earth.getBlockState(new BlockPos(bx, roof, bz)).isAir()) {
+										hanging++;
+									}
+								}
+								if ((bx * 31 + bz) % 211 == 0 && samples.size() < 12) {
+									samples.add(String.format(java.util.Locale.ROOT, "%d,%d floor %d roof %d ground %d (%.1f m) surface %d%s", bx, bz, c.tunnelY[k], roof,
+										c.topSolidY[k], c.groundMeters[k], sky, exposed ? " OPEN" : ""));
+								}
+							}
+						}
+					}
+				}
+				log("tunnels at %.4f, %.4f: %d bore columns, %d open to the sky (by way kind %s); %d lanterns, %d hanging from nothing", place[0], place[1],
+					bores, open, openKinds, lanterns, hanging);
+				for (String sample : samples) {
+					log("  %s", sample);
+				}
+				if (place[2] > 0) {
+					check(mainBores > 50 && mainOpen * 20 <= mainBores, "main road and rail tunnels at %.4f, %.4f run under the ground (%d of %d bore columns open)",
+						place[0], place[1], mainOpen, mainBores);
+					check(lanterns > 0, "tunnels at %.4f, %.4f are lit (%d lanterns)", place[0], place[1], lanterns);
+				}
+				check(hanging == 0, "no tunnel lantern at %.4f, %.4f hangs under the open sky (%d)", place[0], place[1], hanging);
 			}));
 		}
 		phases.add(Map.entry("Railways: the verdict", () -> {
