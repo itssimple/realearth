@@ -47,9 +47,11 @@ public final class OsmWater {
 
 	/**
 	 * A road, track, path or railway centreline, in global z15 sample coordinates, with its bounding
-	 * box. Tunnels are left out: they run inside the ground.
+	 * box and the map tile it was read from. Tunnels are kept apart (Shapes.tunnels): they run inside
+	 * the ground.
 	 */
-	public record Way(double[] points, double widthMeters, byte kind, boolean bridge, double minX, double minY, double maxX, double maxY) {
+	public record Way(double[] points, double widthMeters, byte kind, boolean bridge, double minX, double minY, double maxX, double maxY, int tileX,
+		int tileY) {
 	}
 
 	/**
@@ -96,13 +98,13 @@ public final class OsmWater {
 	 * false when the map has no tile or could not be fetched.
 	 */
 	public record Shapes(List<Area> areas, List<Line> lines, boolean known, List<Way> ways, List<Building> buildings, List<Poi> pois,
-		List<Land> landuse, List<Place> places, List<Street> streets, List<Part> parts, List<Land> parks) {
+		List<Land> landuse, List<Place> places, List<Street> streets, List<Part> parts, List<Land> parks, List<Way> tunnels) {
 		/** The map has no such tile: water comes from elevation, and that is final. */
 		public static final Shapes UNKNOWN = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-			List.of());
+			List.of(), List.of());
 		/** The tile could not be downloaded (compared by identity): water comes from elevation for now. */
 		public static final Shapes FAILED = new Shapes(List.of(), List.of(), false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-			List.of());
+			List.of(), List.of());
 
 		public boolean failed() {
 			return this == FAILED;
@@ -249,9 +251,11 @@ public final class OsmWater {
 		List<Street> streets = new ArrayList<>();
 		List<Part> raised = new ArrayList<>();
 		List<Land> parks = new ArrayList<>();
+		List<Way> tunnels = new ArrayList<>();
 		for (VectorTile.Feature f : features) {
-			if (f.flag("intermittent") || "tunnel".equals(f.string("brunnel"))) {
-				continue;
+			boolean tunnel = "tunnel".equals(f.string("brunnel"));
+			if (f.flag("intermittent") || tunnel && !f.layer().equals("transportation")) {
+				continue; // culverts: water underground
 			}
 			String cls = f.string("class");
 			double scale = samplesPerTile / f.extent();
@@ -385,7 +389,7 @@ public final class OsmWater {
 								minY = Math.min(minY, part[i + 1]);
 								maxY = Math.max(maxY, part[i + 1]);
 							}
-							ways.add(new Way(part, width, kind, bridge, minX, minY, maxX, maxY));
+							(tunnel ? tunnels : ways).add(new Way(part, width, kind, bridge, minX, minY, maxX, maxY, tileX, tileY));
 						}
 					}
 				}
@@ -405,7 +409,7 @@ public final class OsmWater {
 				}
 			}
 		}
-		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets, raised, parks);
+		return new Shapes(areas, lines, true, ways, buildings, pois, landuse, places, streets, raised, parks, tunnels);
 	}
 
 	/** Cities, towns, villages and their districts; not islands, countries, states or lone farms. */

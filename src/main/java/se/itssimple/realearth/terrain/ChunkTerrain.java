@@ -56,6 +56,27 @@ public final class ChunkTerrain {
 	public final int[] roofY = new int[SPAN * SPAN];
 	/** Named streets near this chunk, for the signs at its kerbs. */
 	public volatile java.util.List<se.itssimple.realearth.osm.OsmWater.Street> streets = java.util.List.of();
+	/**
+	 * Per column on a railway track, which neighbours the track runs on to: bits 1 north, 2 east, 4 south,
+	 * 8 west. From the track's own line, so two tracks side by side don't run into each other.
+	 */
+	public final byte[] railLinks = new byte[SPAN * SPAN];
+	/** Y of the rail on each track column, from the track's line (RailTracks); MIN_VALUE where there is none. */
+	public final int[] railY = new int[SPAN * SPAN];
+	/** The same for track in tunnels. */
+	public final int[] tunnelRailY = new int[SPAN * SPAN];
+
+	/** Tunnel columns: 0 none, {@link #TUNNEL_WALL} its lining, {@link #TUNNEL_BORE} dug out. */
+	public final byte[] tunnel = new byte[SPAN * SPAN];
+	public static final byte TUNNEL_WALL = 1;
+	public static final byte TUNNEL_BORE = 2;
+	/** Top of the tunnel's floor block, where there is a tunnel. */
+	public final int[] tunnelY = new int[SPAN * SPAN];
+	/** The way the tunnel carries (Ways), for its floor. */
+	public final byte[] tunnelKind = new byte[SPAN * SPAN];
+	/** Like {@link #railLinks}, for track in tunnels: it can run beneath track on the ground. */
+	public final byte[] tunnelLinks = new byte[SPAN * SPAN];
+
 	/** A point of interest from the map in this chunk, at a world block column. */
 	public record Poi(int x, int z, String cls, String subclass, String name) {
 	}
@@ -73,6 +94,8 @@ public final class ChunkTerrain {
 	}
 
 	{
+		java.util.Arrays.fill(railY, Integer.MIN_VALUE);
+		java.util.Arrays.fill(tunnelRailY, Integer.MIN_VALUE);
 		java.util.Arrays.fill(deckMeters, Float.NaN);
 		java.util.Arrays.fill(deckY, Integer.MIN_VALUE);
 	}

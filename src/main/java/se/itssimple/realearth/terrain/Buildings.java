@@ -213,6 +213,15 @@ final class Buildings {
 		return out;
 	}
 
+	/**
+	 * A column a building mapped over a way leaves open: railway track (a station's train shed), or a
+	 * tunnel just under the ground (a passage through the building).
+	 */
+	private static boolean throughWay(ChunkTerrain t, int k) {
+		return t.way[k] == Ways.RAIL
+			|| t.tunnel[k] == ChunkTerrain.TUNNEL_BORE && t.topSolidY[k] - t.tunnelY[k] < Tunnels.HEADROOM_BLOCKS + 3;
+	}
+
 	/** Sample positions whose ground height sets a building's floor: corners, then the centre. */
 	static List<double[]> heightPoints(Candidate c) {
 		double[] ring = c.building().rings().get(0);
@@ -348,7 +357,7 @@ final class Buildings {
 					int i1 = Math.min(n - 1, (int) Math.ceil(cross[q + 1] - 0.5) - 1 - baseX + 1);
 					for (int i = i0; i <= i1; i++) {
 						int k = j * n + i;
-						if (!onGlobe[k] || t.building[k] != 0 || tileX[k] != c.tileX() || tileY[k] != c.tileY()) {
+						if (!onGlobe[k] || t.building[k] != 0 || tileX[k] != c.tileX() || tileY[k] != c.tileY() || throughWay(t, k)) {
 							continue;
 						}
 						t.building[k] = (short) (p + 1);

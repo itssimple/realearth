@@ -129,8 +129,28 @@ final class WayRaster {
 				}
 			}
 			if (rail) {
-				traceRail(field, t, way, chunkX, chunkZ, deck);
+				// The track's heights as the way's: its deck on a bridge, the ground (and ramps) elsewhere.
+				Bridges.Run railRun = run;
+				double railRampStart = rampStart;
+				double railRampEnd = rampEnd;
+				double[] q = new double[5];
+				RailTracks.trace(field, t, way, chunkX, chunkZ, deck, false, (px, py) -> {
+					nearest(way.points(), px, py, q);
+					double h = TerrainField.splineHeight(tiles, q[1], q[2]);
+					if (way.bridge()) {
+						double d = railRun == null ? Double.NaN : railRun.heightOnWay(way, q[3], q[4]);
+						return Double.isNaN(d) ? h : d;
+					}
+					double fromStart = q[3] * spacing;
+					double fromEnd = (q[4] - q[3]) * spacing;
+					double cone = Math.max(Double.isNaN(railRampStart) ? Double.NEGATIVE_INFINITY : railRampStart - Bridges.GRADIENT * fromStart,
+						Double.isNaN(railRampEnd) ? Double.NEGATIVE_INFINITY : railRampEnd - Bridges.GRADIENT * fromEnd);
+					return Math.max(h, cone);
+				});
 			}
+		}
+		if (rails) {
+			RailTracks.joinEnds(t);
 		}
 
 		for (int k = 0; k < n * n; k++) {
@@ -200,76 +220,4 @@ final class WayRaster {
 		out[4] = length;
 	}
 
-	/**
-	 * The track itself, traced through the block grid so consecutive rails always share a side and
-	 * connect. Done in block coordinates, which the projection gives for each point of the line.
-	 */
-	private static void traceRail(TerrainField field, ChunkTerrain t, OsmWater.Way way, int chunkX, int chunkZ, double[] deck) {
-		Projection projection = field.projection();
-		double[] p = way.points();
-		int baseX = chunkX * 16;
-		int baseZ = chunkZ * 16;
-		double centreX = baseX + 8;
-		double period = projection.periodX();
-		double prevX = Double.NaN;
-		double prevZ = Double.NaN;
-		for (int i = 0; i + 1 < p.length; i += 2) {
-			double lat = Mercator.latitudeOfSampleY(p[i + 1]);
-			double lon = Projection.wrapLongitude((p[i] + 0.5) / Mercator.SAMPLES_PER_AXIS * 360.0 - 180.0);
-			double bx = projection.blockX(lat, lon);
-			double bz = projection.blockZ(lat);
-			if (period > 0) {
-				bx += Math.rint((centreX - bx) / period) * period;
-			}
-			if (!Double.isNaN(prevX)) {
-				traverse(t, prevX - baseX, prevZ - baseZ, bx - baseX, bz - baseZ, way.bridge(), deck);
-			}
-			prevX = bx;
-			prevZ = bz;
-		}
-	}
-
-	/** Grid traversal (Amanatides and Woo) of one segment in chunk-local block coordinates. */
-	private static void traverse(ChunkTerrain t, double x0, double z0, double x1, double z1, boolean bridge, double[] deck) {
-		if (Math.max(x0, x1) < -2 || Math.min(x0, x1) > 18 || Math.max(z0, z1) < -2 || Math.min(z0, z1) > 18) {
-			return;
-		}
-		int cx = (int) Math.floor(x0);
-		int cz = (int) Math.floor(z0);
-		int ex = (int) Math.floor(x1);
-		int ez = (int) Math.floor(z1);
-		double dx = x1 - x0;
-		double dz = z1 - z0;
-		int stepX = dx > 0 ? 1 : -1;
-		int stepZ = dz > 0 ? 1 : -1;
-		double tDeltaX = dx != 0 ? Math.abs(1 / dx) : Double.MAX_VALUE;
-		double tDeltaZ = dz != 0 ? Math.abs(1 / dz) : Double.MAX_VALUE;
-		double tMaxX = dx != 0 ? ((stepX > 0 ? cx + 1 : cx) - x0) / dx : Double.MAX_VALUE;
-		double tMaxZ = dz != 0 ? ((stepZ > 0 ? cz + 1 : cz) - z0) / dz : Double.MAX_VALUE;
-		for (int guard = 0; guard < 4096; guard++) {
-			mark(t, cx, cz, bridge, deck);
-			if (cx == ex && cz == ez) {
-				break;
-			}
-			if (tMaxX < tMaxZ) {
-				tMaxX += tDeltaX;
-				cx += stepX;
-			} else {
-				tMaxZ += tDeltaZ;
-				cz += stepZ;
-			}
-		}
-	}
-
-	private static void mark(ChunkTerrain t, int x, int z, boolean bridge, double[] deck) {
-		if (x < -1 || x > 16 || z < -1 || z > 16) {
-			return;
-		}
-		int k = ChunkTerrain.index(x, z);
-		if (bridge && !Double.isNaN(deck[k])) {
-			t.deckWay[k] = Ways.RAIL;
-		} else if (!bridge && Float.isNaN(t.waterMeters[k])) {
-			t.way[k] = Ways.RAIL;
-		}
-	}
 }

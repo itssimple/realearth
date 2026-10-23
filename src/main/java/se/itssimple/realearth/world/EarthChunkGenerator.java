@@ -354,20 +354,88 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 			}
 		}
 
-		// Rails, last: on the ground as it ended up, even where a structure reshaped it.
+		// Tunnels: the bore dug out and floored, lined with stone where it runs through the ground or under
+		// water, and lit.
+		for (int z = 0; z < 16; z++) {
+			for (int x = 0; x < 16; x++) {
+				int k = ChunkTerrain.index(x, z);
+				byte tunnel = t.tunnel[k];
+				if (tunnel == 0) {
+					continue;
+				}
+				int floor = t.tunnelY[k];
+				int roof = floor + se.itssimple.realearth.terrain.Tunnels.HEADROOM_BLOCKS + 1;
+				if (floor <= minY + 2 || roof >= VerticalScale.MAX_Y - 1) {
+					continue;
+				}
+				BlockState lining = block(Blocks.STONE_BRICKS);
+				if (tunnel == ChunkTerrain.TUNNEL_BORE) {
+					if (chunk.getBlockState(new BlockPos(x, floor - 1, z)).isAir()) {
+						chunk.setBlockState(new BlockPos(x, floor - 1, z), lining, 0);
+					}
+					byte kind = t.tunnelKind[k];
+					chunk.setBlockState(new BlockPos(x, floor, z), Ways.isRail(kind) ? block(Blocks.GRAVEL) : waySurface(kind, baseX + x, baseZ + z), 0);
+					for (int y = floor + 1; y < roof; y++) {
+						chunk.setBlockState(new BlockPos(x, y, z), AIR, 0);
+					}
+					boolean light = se.itssimple.realearth.terrain.Tunnels.lit(t, x, z, baseX + x, baseZ + z);
+					if (light || !chunk.getBlockState(new BlockPos(x, roof, z)).isAir()) {
+						chunk.setBlockState(new BlockPos(x, roof, z), lining, 0);
+					}
+					if (light) {
+						chunk.setBlockState(new BlockPos(x, roof - 1, z), Blocks.LANTERN.defaultBlockState().setValue(BlockStateProperties.HANGING, true), 0);
+					}
+				} else {
+					for (int y = floor; y <= roof; y++) {
+						BlockPos at = new BlockPos(x, y, z);
+						if (!chunk.getBlockState(at).isAir()) {
+							chunk.setBlockState(at, lining, 0);
+						}
+					}
+				}
+			}
+		}
+
+		// Rails, last: at the track's own level, the ballast under them filled up or cut down to it.
 		for (int z = 0; z < 16; z++) {
 			for (int x = 0; x < 16; x++) {
 				Column c = columns[z * 16 + x];
-				if (c.topper == null || !c.topper.is(Blocks.RAIL) || c.waterTop > c.top) {
+				int k = ChunkTerrain.index(x, z);
+				if (t.way[k] != Ways.RAIL || c.waterTop > c.top || t.deckWay[k] == Ways.RAIL) {
 					continue;
 				}
-				for (int y = c.top + 1; y <= c.top + 4; y++) {
-					BlockPos at = new BlockPos(x, y, z);
-					if (chunk.getBlockState(at).isAir() && chunk.getBlockState(at.below()).isSolid()) {
-						chunk.setBlockState(at, c.topper, 0);
-						break;
+				int level = railLevel(t, x, z, false);
+				BlockState rail = railState(t, x, z, baseX + x, baseZ + z, level, false);
+				for (int y = c.top + 1; y < level - 1; y++) {
+					chunk.setBlockState(new BlockPos(x, y, z), block(Blocks.GRAVEL), 0);
+				}
+				for (int y = level; y <= c.top; y++) {
+					chunk.setBlockState(new BlockPos(x, y, z), AIR, 0);
+				}
+				chunk.setBlockState(new BlockPos(x, level - 1, z), rail.is(Blocks.POWERED_RAIL) ? block(Blocks.REDSTONE_BLOCK) : block(Blocks.GRAVEL), 0);
+				chunk.setBlockState(new BlockPos(x, level, z), rail, 0);
+				for (int up = 1; up <= 2; up++) {
+					BlockPos above = new BlockPos(x, level + up, z);
+					if (!chunk.getBlockState(above).isAir() && chunk.getBlockState(above).getFluidState().isEmpty()) {
+						chunk.setBlockState(above, AIR, 0);
 					}
 				}
+			}
+		}
+		// And in tunnels, on the tunnel's floor (where a track comes out of one, the rail on the ground carries on).
+		for (int z = 0; z < 16; z++) {
+			for (int x = 0; x < 16; x++) {
+				int k = ChunkTerrain.index(x, z);
+				if (t.tunnel[k] != ChunkTerrain.TUNNEL_BORE || t.tunnelKind[k] != Ways.RAIL || railPortal(t, k)) {
+					continue;
+				}
+				int level = railLevel(t, x, z, true);
+				BlockState rail = railState(t, x, z, baseX + x, baseZ + z, level, true);
+				for (int y = t.tunnelY[k] + 1; y < level - 1; y++) {
+					chunk.setBlockState(new BlockPos(x, y, z), block(Blocks.GRAVEL), 0);
+				}
+				chunk.setBlockState(new BlockPos(x, level - 1, z), rail.is(Blocks.POWERED_RAIL) ? block(Blocks.REDSTONE_BLOCK) : block(Blocks.GRAVEL), 0);
+				chunk.setBlockState(new BlockPos(x, level, z), rail, 0);
 			}
 		}
 
@@ -388,8 +456,16 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 				}
 				deckTop[z * 16 + x] = y;
 				if (t.deckWay[k] == Ways.RAIL) {
-					chunk.setBlockState(new BlockPos(x, y + 1, z), railShape(t, x, z, true), 0);
-					deckTop[z * 16 + x] = y + 1;
+					int level = railLevel(t, x, z, false);
+					BlockState track = railState(t, x, z, baseX + x, baseZ + z, level, false);
+					for (int fill = y + 1; fill < level; fill++) {
+						chunk.setBlockState(new BlockPos(x, fill, z), block(Blocks.STONE_BRICKS), 0);
+					}
+					if (track.is(Blocks.POWERED_RAIL)) {
+						chunk.setBlockState(new BlockPos(x, level - 1, z), block(Blocks.REDSTONE_BLOCK), 0);
+					}
+					chunk.setBlockState(new BlockPos(x, level, z), track, 0);
+					deckTop[z * 16 + x] = level;
 				}
 			}
 		}
@@ -461,9 +537,102 @@ public final class EarthChunkGenerator extends ChunkGenerator {
 		};
 	}
 
+	/** The track's way in and out of a column: two links (a straight pair where there are more), as direction bits. */
+	private static int railPair(int links) {
+		if (Integer.bitCount(links) <= 2) {
+			return links;
+		}
+		if ((links & 5) == 5) {
+			return 5; // north and south: on straight
+		}
+		if ((links & 10) == 10) {
+			return 10;
+		}
+		return links & -links | Integer.highestOneBit(links);
+	}
+
+	private static boolean railCurve(int pair) {
+		return Integer.bitCount(pair) == 2 && pair != 5 && pair != 10;
+	}
+
+	/** A column where track comes out of a tunnel onto the ground at about the same height: one rail, both ways. */
+	private static boolean railPortal(ChunkTerrain t, int k) {
+		return t.way[k] == Ways.RAIL && t.tunnel[k] == ChunkTerrain.TUNNEL_BORE && t.tunnelKind[k] == Ways.RAIL
+			&& Math.abs(groundRailY(t, k) - tunnelRailY(t, k)) <= 1;
+	}
+
+	private static int groundRailY(ChunkTerrain t, int k) {
+		return t.railY[k] != Integer.MIN_VALUE ? t.railY[k] : t.deckWay[k] == Ways.RAIL ? t.deckY[k] + 1 : t.topSolidY[k] + 1;
+	}
+
+	private static int tunnelRailY(ChunkTerrain t, int k) {
+		return t.tunnelRailY[k] != Integer.MIN_VALUE ? t.tunnelRailY[k] : t.tunnelY[k] + 1;
+	}
+
+	/** The track's links at a column, on the ground or in a tunnel; at a portal, both. */
+	private static int railLinks(ChunkTerrain t, int x, int z, boolean tunnel) {
+		int k = ChunkTerrain.index(x, z);
+		int links = tunnel ? t.tunnelLinks[k] : t.railLinks[k];
+		return railPortal(t, k) ? links | t.railLinks[k] | t.tunnelLinks[k] : links;
+	}
+
 	/**
-	 * The rail at a track column, turned to join its neighbours on the track: straight, curved, or
-	 * sloping up where the next rail is a block higher.
+	 * Where a rail would stand on its column alone: on the ground, on the bridge deck, or on the tunnel's
+	 * floor -- for track in a tunnel, the tunnel's where the column has one, and the ground's where it is
+	 * where the track came out.
+	 */
+	private static int railBase(ChunkTerrain t, int x, int z, boolean tunnel) {
+		int k = ChunkTerrain.index(x, z);
+		boolean ground = t.way[k] == Ways.RAIL || t.deckWay[k] == Ways.RAIL;
+		boolean under = t.tunnel[k] == ChunkTerrain.TUNNEL_BORE && t.tunnelKind[k] == Ways.RAIL;
+		boolean inTunnel = (tunnel ? under || !ground : !ground && under) && !railPortal(t, k);
+		return inTunnel ? tunnelRailY(t, k) : groundRailY(t, k);
+	}
+
+	/** The Y a rail stands at: as the track's line worked it out (RailTracks), so curves and slopes join. */
+	private static int railLevel(ChunkTerrain t, int x, int z, boolean tunnel) {
+		return railBase(t, x, z, tunnel);
+	}
+
+	/** Every this many blocks along a straight track, a powered rail keeps the carts going. */
+	private static final int POWER_EVERY = 6;
+	private static final int[] DIR_X = {0, 1, 0, -1};
+	private static final int[] DIR_Z = {-1, 0, 1, 0};
+
+	/**
+	 * The rail at a track column, shaped by the track's own links: a curve, or straight -- sloping up
+	 * toward the next rail where that one stands a block higher. Slopes, and every POWER_EVERY blocks
+	 * of straight, are powered rails (on a block of redstone).
+	 */
+	private static BlockState railState(ChunkTerrain t, int x, int z, int wx, int wz, int level, boolean tunnel) {
+		int pair = railPair(railLinks(t, x, z, tunnel));
+		if (railCurve(pair)) {
+			RailShape curve = (pair & 1) != 0 ? ((pair & 2) != 0 ? RailShape.NORTH_EAST : RailShape.NORTH_WEST)
+				: ((pair & 2) != 0 ? RailShape.SOUTH_EAST : RailShape.SOUTH_WEST);
+			return Blocks.RAIL.defaultBlockState().setValue(RailBlock.SHAPE, curve);
+		}
+		boolean eastWest = (pair & 10) != 0 && (pair & 5) == 0;
+		RailShape shape = eastWest ? RailShape.EAST_WEST : RailShape.NORTH_SOUTH;
+		for (int d = 0; d < 4; d++) {
+			if ((pair & (1 << d)) != 0 && railLevel(t, x + DIR_X[d], z + DIR_Z[d], tunnel) == level + 1) {
+				shape = switch (d) {
+					case 0 -> RailShape.ASCENDING_NORTH;
+					case 1 -> RailShape.ASCENDING_EAST;
+					case 2 -> RailShape.ASCENDING_SOUTH;
+					default -> RailShape.ASCENDING_WEST;
+				};
+			}
+		}
+		boolean slope = shape.isSlope();
+		if (slope || Math.floorMod(eastWest ? wx : wz, POWER_EVERY) == 0) {
+			return Blocks.POWERED_RAIL.defaultBlockState().setValue(net.minecraft.world.level.block.PoweredRailBlock.SHAPE, shape)
+				.setValue(net.minecraft.world.level.block.PoweredRailBlock.POWERED, true);
+		}
+		return Blocks.RAIL.defaultBlockState().setValue(RailBlock.SHAPE, shape);
+	}
+
+	/**
+	 * Replaced by railState; kept for the column's marker only.
 	 */
 	private static BlockState railShape(ChunkTerrain t, int x, int z, boolean onDeck) {
 		boolean north = isTrack(t, x, z - 1, onDeck);

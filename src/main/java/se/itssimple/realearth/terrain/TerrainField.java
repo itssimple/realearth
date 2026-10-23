@@ -642,6 +642,11 @@ public final class TerrainField implements AutoCloseable {
 					long y1 = maxY;
 					Bridges.Network bridges = Bridges.network(this, tiles, ways, runs, r -> nearChunk(r, x0, y0, x1, y1));
 					WayRaster.apply(this, terrain, tiles, sx, sy, onGlobe, ways, bridges, chunkX, chunkZ, config.useRoads, config.useRailways);
+					List<Tunnels.Run> tunnels = new ArrayList<>(Tunnels.near(this, shapes, x0, y0, x1, y1, 8));
+					tunnels.removeIf(r -> r.rail() ? !config.useRailways : !config.useRoads);
+					if (!tunnels.isEmpty()) {
+						Tunnels.apply(this, terrain, tunnels, sx, sy, onGlobe, chunkX, chunkZ);
+					}
 					se.itssimple.realearth.Perf.stop("terrain.ways", started);
 				}
 			}

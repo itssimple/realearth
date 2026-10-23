@@ -517,6 +517,151 @@ final class SelfTest {
 	 * down (stairs are blocks too), through doors, up and down ladders, with two blocks of headroom.
 	 * Returns {rooms reached, rooms} counting each room once per floor it is on.
 	 */
+	/**
+	 * Rides the rails of an area as a minecart would: from every rail, both its ends must lead on to a
+	 * rail that leads back -- level, one up where this one slopes, or one down where that one slopes up
+	 * toward it. Returns {rails, broken ends, powered rails, unpowered powered rails, ends on a gap, ends at
+	 * a rail that doesn't join}. Rails at the area's edge are left out.
+	 */
+	private static int[] rideRails(ServerLevel level, TerrainField field, int cx0, int cz0, int radius) {
+		int rails = 0;
+		int broken = 0;
+		int powered = 0;
+		int unpowered = 0;
+		int gaps = 0;
+		int mismatched = 0;
+		int tunnels = 0;
+		int lanterns = 0;
+		int ends = 0;
+		int x0 = (cx0 - radius) * 16;
+		int z0 = (cz0 - radius) * 16;
+		int x1 = (cx0 + radius + 1) * 16 - 1;
+		int z1 = (cz0 + radius + 1) * 16 - 1;
+		for (int cx = cx0 - radius; cx <= cx0 + radius; cx++) {
+			for (int cz = cz0 - radius; cz <= cz0 + radius; cz++) {
+				LevelChunk chunk = level.getChunk(cx, cz);
+				ChunkTerrain t = field.chunkIfReady(cx, cz);
+				if (t == null) {
+					continue;
+				}
+				for (int x = 0; x < 16; x++) {
+					for (int z = 0; z < 16; z++) {
+						int ground = t.topSolidY[ChunkTerrain.index(x, z)];
+						int deck = t.deckY[ChunkTerrain.index(x, z)];
+						int lo = Math.min(ground, deck == Integer.MIN_VALUE ? ground : deck) - 12;
+						int hi = Math.max(ground, deck == Integer.MIN_VALUE ? ground : deck) + 8;
+						if (t.tunnel[ChunkTerrain.index(x, z)] != 0) {
+							tunnels++;
+							int floor = t.tunnelY[ChunkTerrain.index(x, z)];
+							lo = Math.min(lo, floor);
+							hi = Math.max(hi, floor + 3);
+							for (int y = floor + 1; y <= floor + se.itssimple.realearth.terrain.Tunnels.HEADROOM_BLOCKS; y++) {
+								if (chunk.getBlockState(new BlockPos(x, y, z)).is(Blocks.LANTERN)) {
+									lanterns++;
+								}
+							}
+						}
+						for (int y = lo; y <= hi; y++) {
+							BlockPos at = new BlockPos(cx * 16 + x, y, cz * 16 + z);
+							var state = chunk.getBlockState(at);
+							if (!(state.getBlock() instanceof net.minecraft.world.level.block.BaseRailBlock rail)) {
+								continue;
+							}
+							if (at.getX() <= x0 + 1 || at.getX() >= x1 - 1 || at.getZ() <= z0 + 1 || at.getZ() >= z1 - 1) {
+								continue;
+							}
+							rails++;
+							if (state.is(Blocks.POWERED_RAIL)) {
+								powered++;
+								if (!state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED)) {
+									unpowered++;
+								}
+							}
+							var shape = state.getValue(rail.getShapeProperty());
+							for (int[] exit : exits(shape)) {
+								int result = joins(level, at, exit);
+								if (result != 0) {
+									// Only a break where the track's own line runs on to the next rail: where the line ends
+									// (a buffer stop) or meets another line (a branch, a crossing), rails can't join.
+									int k = ChunkTerrain.index(x, z);
+									int bit = exit[1] < 0 ? 1 : exit[0] > 0 ? 2 : exit[1] > 0 ? 4 : 8;
+									int back = exit[1] < 0 ? 4 : exit[0] > 0 ? 8 : exit[1] > 0 ? 1 : 2;
+									int nx = x + exit[0];
+									int nz = z + exit[1];
+									boolean inData = nx >= -1 && nx <= 16 && nz >= -1 && nz <= 16;
+									int links = t.railLinks[k] | t.tunnelLinks[k];
+									int theirs = inData ? t.railLinks[ChunkTerrain.index(nx, nz)] | t.tunnelLinks[ChunkTerrain.index(nx, nz)] : back;
+									if ((links & bit) == 0 || (theirs & back) == 0 || Integer.bitCount(theirs) >= 3 || Integer.bitCount(links) >= 3) {
+										ends++;
+										continue;
+									}
+								}
+								if (result != 0 && broken < 14) {
+									StringBuilder around = new StringBuilder();
+									for (int dy = 1; dy >= -2; dy--) {
+										var n = level.getBlockState(at.offset(exit[0], dy, exit[1]));
+										around.append(dy).append(':').append(n.getBlock().getDescriptionId().replace("block.minecraft.", ""))
+											.append(n.getBlock() instanceof net.minecraft.world.level.block.BaseRailBlock r2 ? "/" + n.getValue(r2.getShapeProperty()) : "").append(' ');
+									}
+									int k = ChunkTerrain.index(x, z);
+									int nk = ChunkTerrain.index(Math.max(-1, Math.min(16, x + exit[0])), Math.max(-1, Math.min(16, z + exit[1])));
+									log("    broken rail at %s %s toward %d,%d (%s): way %d deck %s links %d/%d y %d/%d; next links %d/%d y %d/%d tunnel %d; next %s",
+										at.toShortString(), shape, exit[0], exit[1], result == 1 ? "gap" : "not joining", t.way[k],
+										t.deckY[k] == Integer.MIN_VALUE ? "-" : Integer.toString(t.deckY[k]), t.railLinks[k], t.tunnelLinks[k], t.railY[k], t.tunnelRailY[k],
+										t.railLinks[nk], t.tunnelLinks[nk], t.railY[nk], t.tunnelRailY[nk], t.tunnel[nk], around);
+								}
+								if (result != 0) {
+									broken++;
+									if (result == 1) {
+										gaps++;
+									} else {
+										mismatched++;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return new int[] {rails, broken, powered, unpowered, gaps, mismatched, tunnels, lanterns, ends};
+	}
+
+	/** A rail shape's two ends: {dx, dz, dy}, dy 1 where it slopes up that way. */
+	private static int[][] exits(net.minecraft.world.level.block.state.properties.RailShape shape) {
+		return switch (shape) {
+			case NORTH_SOUTH -> new int[][] {{0, -1, 0}, {0, 1, 0}};
+			case EAST_WEST -> new int[][] {{1, 0, 0}, {-1, 0, 0}};
+			case ASCENDING_EAST -> new int[][] {{1, 0, 1}, {-1, 0, 0}};
+			case ASCENDING_WEST -> new int[][] {{-1, 0, 1}, {1, 0, 0}};
+			case ASCENDING_NORTH -> new int[][] {{0, -1, 1}, {0, 1, 0}};
+			case ASCENDING_SOUTH -> new int[][] {{0, 1, 1}, {0, -1, 0}};
+			case SOUTH_EAST -> new int[][] {{0, 1, 0}, {1, 0, 0}};
+			case SOUTH_WEST -> new int[][] {{0, 1, 0}, {-1, 0, 0}};
+			case NORTH_WEST -> new int[][] {{0, -1, 0}, {-1, 0, 0}};
+			case NORTH_EAST -> new int[][] {{0, -1, 0}, {1, 0, 0}};
+		};
+	}
+
+	/** 0 when the end at {@code exit} of the rail at {@code at} joins a rail that leads back; 1 on a gap; 2 on a rail that doesn't. */
+	private static int joins(ServerLevel level, BlockPos at, int[] exit) {
+		boolean any = false;
+		for (int dy : exit[2] == 1 ? new int[] {1} : new int[] {0, -1}) {
+			BlockPos n = at.offset(exit[0], dy, exit[1]);
+			var state = level.getBlockState(n);
+			if (!(state.getBlock() instanceof net.minecraft.world.level.block.BaseRailBlock rail)) {
+				continue;
+			}
+			any = true;
+			for (int[] back : exits(state.getValue(rail.getShapeProperty()))) {
+				if (back[0] == -exit[0] && back[1] == -exit[1] && (dy == -1 ? back[2] == 1 : back[2] == 0 || dy == 1)) {
+					return 0;
+				}
+			}
+		}
+		return any ? 2 : 1;
+	}
+
 	private static int[] walkRooms(ServerLevel level, se.itssimple.realearth.terrain.BuildingPlan plan) {
 		var inside = plan.interior();
 		int x0 = (int) Math.floor(plan.minX) - 3;
@@ -1265,6 +1410,39 @@ final class SelfTest {
 			check(water && ok == 20, "fish may spawn in lakes above the sea (%d of 20)", ok);
 		}
 
+		// Railways you can ride: every rail joins the next, on the ground, over bridges and through tunnels.
+		{
+			TerrainField field = RealEarth.terrain();
+			int rails = 0;
+			int broken = 0;
+			int powered = 0;
+			int unpowered = 0;
+			int gaps = 0;
+			int mismatched = 0;
+			int tunnels = 0;
+			int lanterns = 0;
+			// Karlberg's yards; the main line by Marsta; the Arlanda line going under ground; Gothenburg's rail
+			// tunnels; Soderledstunneln, a road under Sodermalm.
+			for (double[] place : new double[][] {{59.3458, 18.0182}, {59.6200, 17.8600}, {59.6141, 17.8612}, {57.7150, 11.9904}, {59.3140, 18.0700}}) {
+				int cx = (int) Math.floor(field.projection().blockX(place[0], place[1])) >> 4;
+				int cz = (int) Math.floor(field.projection().blockZ(place[0])) >> 4;
+				int[] r = rideRails(earth, field, cx, cz, 4);
+				log("rails at %.4f, %.4f: %d rails, %d broken ends (%d on a gap, %d not joining), %d track ends, %d powered (%d without power); "
+					+ "%d tunnel columns, %d lanterns", place[0], place[1], r[0], r[1], r[4], r[5], r[8], r[2], r[3], r[6], r[7]);
+				tunnels += r[6];
+				lanterns += r[7];
+				rails += r[0];
+				broken += r[1];
+				powered += r[2];
+				unpowered += r[3];
+				gaps += r[4];
+				mismatched += r[5];
+			}
+			check(rails > 100 && broken * 200 <= rails, "rails join up end to end (%d broken ends over %d rails)", broken, rails);
+			check(powered * 20 >= rails && unpowered == 0, "railways are powered (%d powered rails, %d without power, over %d rails)", powered, unpowered, rails);
+			check(tunnels > 50 && lanterns > 0, "railway tunnels are dug out and lit (%d tunnel columns, %d lanterns)", tunnels, lanterns);
+		}
+
 		// Slimes: in slime chunks only well below the sea, as in vanilla; not on the surface.
 		{
 			TerrainField field = RealEarth.terrain();
@@ -1529,7 +1707,8 @@ final class SelfTest {
 				}
 				log("building detail: %d shapes in central Stockholm's tile; of %d buildings planned round it, roofs %s; tower caps %s", shapes, seenPlans.size(), roofs, caps);
 				int mapped = roofs.entrySet().stream().filter(e -> !e.getKey().equals("NONE")).mapToInt(java.util.Map.Entry::getValue).sum();
-				check(shapes > 100 && mapped >= 10, "buildings take their roofs as mapped (%d shapes in the tile, %d buildings)", shapes, mapped);
+				check(shapes > 100 && seenPlans.size() >= 30 && mapped * 20 >= seenPlans.size(), "buildings take their roofs as mapped (%d shapes in the tile, %d of %d buildings)",
+					shapes, mapped, seenPlans.size());
 			}
 
 			// Street life: the map's furniture where it is mapped, and parks with benches and fountains.

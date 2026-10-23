@@ -102,13 +102,22 @@ north-south lines lean far from its centre). Set `"projection": "sinusoidal"` to
 - **Roads, tracks and paths** come from OpenStreetMap: asphalt (grey concrete) for streets and highways, sized by
   class, coarse dirt and gravel for tracks, dirt paths for footways and cycleways. Roads are levelled across
   their width where the ground allows.
-- **Railways and trams** are real rail on a gravel bed, curving and sloping to follow the line.
+- **Railways and trams** are real rail on a gravel bed, laid so a minecart can ride them across the land:
+  - each line is one continuous track; a diagonal is a staircase of two-cell steps, so it can climb, and it
+    slopes only where it runs straight (the ground under it is filled or cut to fit);
+  - two tracks side by side never run into each other, and a line crossing a map tile's edge is joined up;
+  - powered rails, on a block of redstone, on every slope and every six blocks of straight;
+  - track runs through the stations mapped over it, on bridges, and through tunnels.
 - **Bridges** carry roads and railways over water and valleys. A bridge the map splits into pieces is built as
   one: its deck runs straight between its two real ends, rising in a rounded crest only where it has to clear
   water or a road beneath. Near the ground it is a road on filled ground at the deck's own height, so there is
   no step onto it, and roads meeting a raised end ramp up to it (a block every three or so). Roads the map
   draws across the water's edge are built up out of it as a causeway, so they don't break off at the shore.
-  Tunnels are left inside the ground.
+- **Tunnels** for roads, paths and railways are dug through the ground: a block wider each side than the way,
+  four blocks high, lined with stone where they run through rock or under water, with lanterns along the roof.
+  The floor runs straight from the ground at one portal to the ground at the other, so the ways outside carry
+  straight on; a tunnel the map splits across tiles is followed to its real ends first. A tunnel just under a
+  building, a passage, goes through it.
 
 Only newly generated chunks get these: in a world from an earlier version, towns and roads start where new
 terrain begins.

@@ -60,7 +60,8 @@ public final class BuiltUpPlacement extends RandomSpreadStructurePlacement {
 	public boolean applyAdditionalChunkRestrictions(int sourceX, int sourceZ, long levelSeed) {
 		return super.applyAdditionalChunkRestrictions(sourceX, sourceZ, levelSeed) && GenContext.exact()
 			&& builtShare(sourceX * 16 + 8, sourceZ * 16 + 8, radius) >= minBuiltShare
-			&& !nearRailOrMotorway(sourceX * 16 + 8, sourceZ * 16 + 8, radius + 16)
+			// A village's houses reach up to 80 blocks from its middle: clear of railways and motorways by that.
+			&& !nearRailOrMotorway(sourceX * 16 + 8, sourceZ * 16 + 8, radius + 64)
 			&& mappedBuildings(sourceX * 16 + 8, sourceZ * 16 + 8, radius) < BUILDINGS_REPLACE_VILLAGE;
 	}
 
